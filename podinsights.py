@@ -20,8 +20,15 @@ def transcribe_audio(audio_path: str) -> str:
         The transcribed text.
     """
     if shutil.which("whisper"):
-        result_path = audio_path + "_transcription.txt"
-        subprocess.run(["whisper", audio_path, "--output", result_path], check=True)
+        output_dir = os.path.dirname(audio_path) or "."
+        result_filename = os.path.basename(audio_path).split(".")[0]
+        subprocess.run([
+            "whisper", 
+            audio_path, 
+            "--output_dir", output_dir,
+            "--output_format", "txt"
+        ], check=True)
+        result_path = os.path.join(output_dir, f"{result_filename}.txt")
         with open(result_path, "r", encoding="utf-8") as f:
             return f.read()
     else:
