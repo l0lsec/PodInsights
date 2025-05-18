@@ -131,6 +131,7 @@ def view_feed(feed_id: int):
         episodes.append({
             'title': entry.title,
             'description': desc,
+            'clean_description': clean_desc,
             'short_description': make_short_description(clean_desc),
             'image': img,
             'enclosure': url,
@@ -143,9 +144,19 @@ def process_episode():
     audio_url = request.args.get('url')
     title = request.args.get('title', 'Episode')
     feed_id = request.args.get('feed_id', type=int)
+    description = strip_html(request.args.get('description', ''))
     if not audio_url:
         return redirect(url_for('index'))
     app.logger.info("Processing episode: %s", audio_url)
+    if not description and feed_id:
+        feed = get_feed_by_id(feed_id)
+        if feed:
+            feed_data = feedparser.parse(feed['url'])
+            for entry in feed_data.entries:
+                if entry.get('enclosures') and entry.enclosures[0].href == audio_url:
+                    desc = entry.get('summary') or entry.get('description', '')
+                    description = strip_html(desc)
+                    break
     existing = get_episode(audio_url)
     if existing:
         summary = existing["summary"]
@@ -156,6 +167,7 @@ def process_episode():
             title=existing["title"],
             summary=summary,
             actions=actions,
+            description=description,
             feed_id=feed_id,
             url=audio_url,
             tickets=tickets,
@@ -187,6 +199,7 @@ def process_episode():
         title=title,
         summary=summary,
         actions=actions,
+        description=description,
         feed_id=feed_id,
         url=audio_url,
         tickets=[],
