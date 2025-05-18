@@ -5,7 +5,11 @@
 <p>Created {{ created|length }} tickets:</p>
 <ul>
 {% for item in created %}
-  <li>{{ item }}</li>
+  {% if item.error %}
+  <li>{{ item.error }}</li>
+  {% else %}
+  <li><a href="{{ item.url }}" target="_blank">{{ item.key }}</a></li>
+  {% endif %}
 {% endfor %}
 </ul>
 <p><a href="{{ url_for('index') }}">Home</a></p>

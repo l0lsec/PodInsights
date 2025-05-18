@@ -61,3 +61,6 @@ JIRA Cloud instance:
 - `JIRA_PROJECT_KEY` – project key for new issues
 
 Select the action items you want to track and click **Create JIRA Tickets**.
+Created issues are stored locally so you can access them later. When viewing an
+episode's results the associated JIRA tickets are listed with links. A dedicated
+"Tickets" page in the web interface lists every issue that has been created.

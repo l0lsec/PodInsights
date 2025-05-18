@@ -34,6 +34,18 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS jira_tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER,
+                action_item TEXT,
+                ticket_key TEXT,
+                ticket_url TEXT,
+                FOREIGN KEY(episode_id) REFERENCES episodes(id)
+            )
+            """
+        )
         conn.commit()
 
 
@@ -111,4 +123,52 @@ def list_episodes(feed_id: int, db_path: str = DB_PATH) -> List[sqlite3.Row]:
         cur = conn.execute(
             "SELECT * FROM episodes WHERE feed_id = ? ORDER BY id", (feed_id,)
         )
+        return cur.fetchall()
+
+
+def add_ticket(
+    episode_id: int,
+    action_item: str,
+    ticket_key: str,
+    ticket_url: str,
+    db_path: str = DB_PATH,
+) -> None:
+    """Save a JIRA ticket associated with an episode."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO jira_tickets (episode_id, action_item, ticket_key, ticket_url)
+            VALUES (?, ?, ?, ?)
+            """,
+            (episode_id, action_item, ticket_key, ticket_url),
+        )
+        conn.commit()
+
+
+def list_tickets(
+    episode_id: Optional[int] | None = None, db_path: str = DB_PATH
+) -> List[sqlite3.Row]:
+    """List all JIRA tickets or those for a specific episode."""
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        if episode_id is None:
+            cur = conn.execute(
+                """
+                SELECT jt.*, e.title AS episode_title
+                FROM jira_tickets jt
+                JOIN episodes e ON jt.episode_id = e.id
+                ORDER BY jt.id
+                """
+            )
+        else:
+            cur = conn.execute(
+                """
+                SELECT jt.*, e.title AS episode_title
+                FROM jira_tickets jt
+                JOIN episodes e ON jt.episode_id = e.id
+                WHERE jt.episode_id = ?
+                ORDER BY jt.id
+                """,
+                (episode_id,),
+            )
         return cur.fetchall()
