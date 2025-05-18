@@ -1,13 +1,12 @@
-import shutil
-import subprocess
 import os
 import re
+import json
 from collections import Counter
 from typing import List
 
 
 def transcribe_audio(audio_path: str) -> str:
-    """Transcribe an audio file using the `whisper` command if available.
+    """Transcribe an audio file using the ``faster-whisper`` library.
 
     Parameters
     ----------
@@ -19,22 +18,18 @@ def transcribe_audio(audio_path: str) -> str:
     str
         The transcribed text.
     """
-    if shutil.which("whisper"):
-        output_dir = os.path.dirname(audio_path) or "."
-        result_filename = os.path.basename(audio_path).split(".")[0]
-        subprocess.run([
-            "whisper", 
-            audio_path, 
-            "--output_dir", output_dir,
-            "--output_format", "txt"
-        ], check=True)
-        result_path = os.path.join(output_dir, f"{result_filename}.txt")
-        with open(result_path, "r", encoding="utf-8") as f:
-            return f.read()
-    else:
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as exc:  # pragma: no cover - optional dependency
         raise NotImplementedError(
-            "Audio transcription requires the `whisper` command line tool."
-        )
+            "Audio transcription requires the `faster-whisper` package."
+        ) from exc
+
+    # Use the small model for a reasonable default
+    model = WhisperModel("base", device="cpu")
+    segments, _ = model.transcribe(audio_path)
+    transcript = " ".join(segment.text.strip() for segment in segments)
+    return transcript
 
 
 def _tokenize_sentences(text: str) -> List[str]:
@@ -75,7 +70,19 @@ def extract_action_items(text: str) -> List[str]:
     return actions
 
 
-def main(audio_path: str) -> None:
+def write_results_json(transcript: str, summary: str, actions: List[str], output_path: str) -> None:
+    """Write the analysis results to ``output_path`` as JSON."""
+
+    data = {
+        "transcript": transcript,
+        "summary": summary,
+        "action_items": actions,
+    }
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def main(audio_path: str, json_path: str | None = None) -> None:
     try:
         transcript = transcribe_audio(audio_path)
     except NotImplementedError as e:
@@ -90,11 +97,23 @@ def main(audio_path: str) -> None:
     for item in actions:
         print("-", item)
 
+    if json_path is None:
+        json_path = os.path.splitext(audio_path)[0] + ".json"
+    write_results_json(transcript, summary, actions, json_path)
+    print(f"\nResults written to {json_path}")
+
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Transcribe and analyze podcasts")
     parser.add_argument("audio", help="Path to the podcast audio file")
+    parser.add_argument(
+        "-j",
+        "--json",
+        help=(
+            "Optional path to save results as JSON; defaults to <audio>.json"
+        ),
+    )
     args = parser.parse_args()
-    main(args.audio)
+    main(args.audio, args.json)
