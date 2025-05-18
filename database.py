@@ -151,10 +151,14 @@ def list_tickets(
     """List all JIRA tickets or those for a specific episode."""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
+        columns = (
+            "jt.*, e.title AS episode_title, e.summary AS episode_summary,"
+            " e.url AS episode_url, e.feed_id AS feed_id"
+        )
         if episode_id is None:
             cur = conn.execute(
-                """
-                SELECT jt.*, e.title AS episode_title
+                f"""
+                SELECT {columns}
                 FROM jira_tickets jt
                 JOIN episodes e ON jt.episode_id = e.id
                 ORDER BY jt.id
@@ -162,8 +166,8 @@ def list_tickets(
             )
         else:
             cur = conn.execute(
-                """
-                SELECT jt.*, e.title AS episode_title
+                f"""
+                SELECT {columns}
                 FROM jira_tickets jt
                 JOIN episodes e ON jt.episode_id = e.id
                 WHERE jt.episode_id = ?
