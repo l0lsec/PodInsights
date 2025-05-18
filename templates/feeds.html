@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>PodInsights Feeds</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; }
+        h1 { color: #333; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ccc; padding: 0.5em; text-align: left; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+    </style>
+</head>
+<body>
+    <h1>Stored Podcast Feeds</h1>
+    <form method="post">
+        <label for="feed_url">Add Feed URL:</label>
+        <input type="text" name="feed_url" id="feed_url" size="60">
+        <input type="submit" value="Add">
+    </form>
+    {% if feeds %}
+    <h2>Feeds</h2>
+    <table>
+        <tr><th>Title</th><th>URL</th><th>View</th></tr>
+        {% for f in feeds %}
+        <tr>
+            <td>{{ f.title }}</td>
+            <td>{{ f.url }}</td>
+            <td><a href="{{ url_for('view_feed', feed_id=f.id) }}">Open</a></td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+</body>
+</html>

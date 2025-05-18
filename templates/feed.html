@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>PodInsights</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; }
+        h1 { color: #333; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ccc; padding: 0.5em; text-align: left; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .processed { color: green; }
+    </style>
+</head>
+<body>
+    <h1>{{ feed.title }}</h1>
+    <p><a href="{{ url_for('index') }}">Back to feeds</a></p>
+
+    {% if episodes %}
+    <h2>Episodes</h2>
+    <table>
+        <tr><th>Title</th><th>Transcribed</th><th>Summarized</th><th>Actions</th><th>Process</th></tr>
+        {% for ep in episodes %}
+        <tr>
+            <td>{{ ep.title }}</td>
+            <td>{% if ep.status.transcribed %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
+            <td>{% if ep.status.summarized %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
+            <td>{% if ep.status.actions %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
+            <td><a href="{{ url_for('process_episode', url=ep.enclosure, title=ep.title, feed_id=feed.id) }}">Process</a></td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+</body>
+</html>

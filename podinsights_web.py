@@ -1,9 +1,17 @@
 from __future__ import annotations
 import os
 import tempfile
-from flask import Flask, request, render_template_string, redirect, url_for
+from flask import Flask, request, render_template, redirect, url_for
 import feedparser
 import requests
+from database import (
+    init_db,
+    get_episode,
+    save_episode,
+    add_feed,
+    list_feeds,
+    get_feed_by_id,
+)
 from podinsights import (
     transcribe_audio,
     summarize_text,
@@ -14,62 +22,55 @@ from podinsights import (
 
 app = Flask(__name__)
 configure_logging()
+init_db()
 
-INDEX_TEMPLATE = """
-<!doctype html>
-<title>PodInsights</title>
-<h1>PodInsights Feed Processor</h1>
-<form method=post>
-  RSS Feed URL:<br>
-  <input type=text name=feed_url size=60>
-  <input type=submit value=Load>
-</form>
-{% if episodes %}
-  <h2>Episodes</h2>
-  <ul>
-  {% for ep in episodes %}
-    <li>{{ ep.title }} - <a href="{{ url_for('process_episode', url=ep.enclosure, title=ep.title) }}">Process</a></li>
-  {% endfor %}
-  </ul>
-{% endif %}
-"""
-
-RESULT_TEMPLATE = """
-<!doctype html>
-<title>PodInsights Result</title>
-<h1>{{ title }}</h1>
-<h2>Summary</h2>
-<pre>{{ summary }}</pre>
-<h2>Action Items</h2>
-<ul>
-{% for item in actions %}
-  <li>{{ item }}</li>
-{% endfor %}
-</ul>
-"""
+# Templates are stored in the ``templates`` directory
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    episodes = None
+    feeds = list_feeds()
     if request.method == 'POST':
         feed_url = request.form['feed_url']
         feed = feedparser.parse(feed_url)
-        episodes = [
-            {
-                'title': entry.title,
-                'enclosure': entry.enclosures[0].href if entry.enclosures else None,
-            }
-            for entry in feed.entries
-            if entry.get('enclosures')
-        ]
-    return render_template_string(INDEX_TEMPLATE, episodes=episodes)
+        title = feed.feed.get('title', feed_url)
+        feed_id = add_feed(feed_url, title)
+        return redirect(url_for('view_feed', feed_id=feed_id))
+    return render_template('feeds.html', feeds=feeds)
+
+
+@app.route('/feed/<int:feed_id>')
+def view_feed(feed_id: int):
+    feed = get_feed_by_id(feed_id)
+    if not feed:
+        return redirect(url_for('index'))
+    feed_data = feedparser.parse(feed['url'])
+    episodes = []
+    for entry in feed_data.entries:
+        if not entry.get('enclosures'):
+            continue
+        url = entry.enclosures[0].href
+        ep_db = get_episode(url)
+        status = {
+            'transcribed': ep_db is not None and bool(ep_db['transcript']),
+            'summarized': ep_db is not None and bool(ep_db['summary']),
+            'actions': ep_db is not None and bool(ep_db['action_items']),
+        }
+        episodes.append({'title': entry.title, 'enclosure': url, 'status': status})
+    return render_template('feed.html', feed=feed, episodes=episodes)
 
 @app.route('/process')
 def process_episode():
     audio_url = request.args.get('url')
     title = request.args.get('title', 'Episode')
+    feed_id = request.args.get('feed_id', type=int)
     if not audio_url:
         return redirect(url_for('index'))
+    existing = get_episode(audio_url)
+    if existing:
+        summary = existing["summary"]
+        actions = existing["action_items"].splitlines()
+        return render_template('result.html', title=existing["title"], summary=summary, actions=actions, feed_id=feed_id)
+
     with tempfile.TemporaryDirectory() as tmpdir:
         audio_path = os.path.join(tmpdir, 'episode.mp3')
         with requests.get(audio_url, stream=True) as r:
@@ -82,10 +83,8 @@ def process_episode():
         actions = extract_action_items(transcript)
         out_path = os.path.join(tmpdir, 'results.json')
         write_results_json(transcript, summary, actions, out_path)
-        # Read the json results to display
-        with open(out_path, 'r', encoding='utf-8') as f:
-            data = f.read()
-    return render_template_string(RESULT_TEMPLATE, title=title, summary=summary, actions=actions)
+        save_episode(audio_url, title, transcript, summary, actions, feed_id)
+    return render_template('result.html', title=title, summary=summary, actions=actions, feed_id=feed_id)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
