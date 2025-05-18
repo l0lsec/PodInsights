@@ -14,7 +14,9 @@
         <th>Transcribed</th>
         <th>Summarized</th>
         <th>Actions</th>
+        <th>Status</th>
         <th>Process</th>
+        <th>Queue</th>
     </tr>
     {% for ep in episodes %}
     <tr>
@@ -33,11 +35,15 @@
         <td>{% if ep.status.transcribed %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
         <td>{% if ep.status.summarized %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
         <td>{% if ep.status.actions %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
+        <td>{{ ep.status.state }}</td>
         <td>
             <a
                 href="{{ url_for('process_episode', url=ep.enclosure, title=ep.title, feed_id=feed.id, description=ep.clean_description) }}"
                 data-processing="true"
             >Process</a>
+        </td>
+        <td>
+            <a href="{{ url_for('enqueue_episode', url=ep.enclosure, title=ep.title, feed_id=feed.id) }}">Queue</a>
         </td>
     </tr>
     {% endfor %}

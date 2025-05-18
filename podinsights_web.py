@@ -1,6 +1,8 @@
 from __future__ import annotations
 import os
 import tempfile
+import threading
+from queue import Queue
 from flask import Flask, request, render_template, redirect, url_for
 import re
 import feedparser
@@ -10,11 +12,14 @@ from database import (
     init_db,
     get_episode,
     save_episode,
+    queue_episode,
+    update_episode_status,
     add_feed,
     list_feeds,
     get_feed_by_id,
     add_ticket,
     list_tickets,
+    list_all_episodes,
 )
 from podinsights import (
     transcribe_audio,
@@ -27,6 +32,44 @@ from podinsights import (
 app = Flask(__name__)
 configure_logging()
 init_db()
+
+# Background processing queue
+task_queue: Queue = Queue()
+
+
+def worker() -> None:
+    """Background thread processing queued episodes."""
+    while True:
+        item = task_queue.get()
+        if item is None:
+            break
+        url = item["url"]
+        title = item.get("title", "Episode")
+        feed_id = item.get("feed_id")
+        try:
+            update_episode_status(url, "processing")
+            with tempfile.TemporaryDirectory() as tmpdir:
+                audio_path = os.path.join(tmpdir, "episode.mp3")
+                with requests.get(url, stream=True) as r:
+                    r.raise_for_status()
+                    with open(audio_path, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                transcript = transcribe_audio(audio_path)
+                summary = summarize_text(transcript)
+                actions = extract_action_items(transcript)
+                out_path = os.path.join(tmpdir, "results.json")
+                write_results_json(transcript, summary, actions, out_path)
+                save_episode(url, title, transcript, summary, actions, feed_id)
+        except Exception:
+            app.logger.exception("Failed to process episode %s", url)
+            update_episode_status(url, "error")
+        finally:
+            task_queue.task_done()
+
+
+worker_thread = threading.Thread(target=worker, daemon=True)
+worker_thread.start()
 
 
 def strip_html(text: str) -> str:
@@ -116,6 +159,7 @@ def view_feed(feed_id: int):
             'transcribed': ep_db is not None and bool(ep_db['transcript']),
             'summarized': ep_db is not None and bool(ep_db['summary']),
             'actions': ep_db is not None and bool(ep_db['action_items']),
+            'state': ep_db['status'] if ep_db else 'new',
         }
         desc = entry.get('summary') or entry.get('description', '')
         clean_desc = strip_html(desc)
@@ -138,6 +182,19 @@ def view_feed(feed_id: int):
             'status': status,
         })
     return render_template('feed.html', feed=feed, episodes=episodes)
+
+
+@app.route('/enqueue')
+def enqueue_episode():
+    """Queue an episode for background processing."""
+    audio_url = request.args.get('url')
+    title = request.args.get('title', 'Episode')
+    feed_id = request.args.get('feed_id', type=int)
+    if not audio_url or feed_id is None:
+        return redirect(url_for('index'))
+    queue_episode(audio_url, title, feed_id)
+    task_queue.put({'url': audio_url, 'title': title, 'feed_id': feed_id})
+    return redirect(url_for('status_page'))
 
 @app.route('/process')
 def process_episode():
@@ -227,6 +284,14 @@ def create_jira():
         except Exception as exc:  # pragma: no cover - external call
             created.append({'error': str(exc)})
     return render_template('jira_result.html', created=created)
+
+
+@app.route('/status')
+def status_page():
+    """Display processing status for all episodes."""
+    episodes = list_all_episodes()
+    feeds = {f["id"]: f["title"] for f in list_feeds()}
+    return render_template('status.html', episodes=episodes, feeds=feeds)
 
 
 @app.route('/tickets')

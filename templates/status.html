@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Processing Status{% endblock %}
+{% block header %}Processing Status{% endblock %}
+{% block content %}
+{% if episodes %}
+<table class="table table-striped">
+    <tr>
+        <th>Feed</th>
+        <th>Title</th>
+        <th>Status</th>
+        <th>Play</th>
+        <th>View</th>
+    </tr>
+    {% for ep in episodes %}
+    <tr>
+        <td>{{ feeds.get(ep.feed_id, ep.feed_id) }}</td>
+        <td>{{ ep.title }}</td>
+        <td>{{ ep.status or 'queued' }}</td>
+        <td>
+            <audio controls preload="none" src="{{ ep.url }}">
+                Your browser does not support the audio element.
+            </audio>
+        </td>
+        <td>
+        {% if ep.status == 'complete' %}
+            <a href="{{ url_for('process_episode', url=ep.url, title=ep.title, feed_id=ep.feed_id) }}">View</a>
+        {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No episodes queued or processed.</p>
+{% endif %}
+{% endblock %}
