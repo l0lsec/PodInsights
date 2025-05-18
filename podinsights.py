@@ -3,7 +3,7 @@ import json
 import logging
 from typing import List
 
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-40-mini")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-nano")
 
 logger = logging.getLogger(__name__)
 
