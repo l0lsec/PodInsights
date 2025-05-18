@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}JIRA Tickets{% endblock %}
+{% block header %}JIRA Tickets{% endblock %}
+{% block content %}
+<p>Created {{ created|length }} tickets:</p>
+<ul>
+{% for item in created %}
+  <li>{{ item }}</li>
+{% endfor %}
+</ul>
+<p><a href="{{ url_for('index') }}">Home</a></p>
+{% endblock %}

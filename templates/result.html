@@ -9,11 +9,20 @@
     </div>
     <div class="tile">
         <h2>Action Items</h2>
-        <ul>
-        {% for item in actions %}
-            <li>{{ item }}</li>
-        {% endfor %}
-        </ul>
+        <form method="post" action="{{ url_for('create_jira') }}">
+            <input type="hidden" name="title" value="{{ title }}">
+            <ul>
+            {% for item in actions %}
+                <li>
+                    <label>
+                        <input type="checkbox" name="items" value="{{ item }}">
+                        {{ item }}
+                    </label>
+                </li>
+            {% endfor %}
+            </ul>
+            <input type="submit" value="Create JIRA Tickets">
+        </form>
     </div>
 </div>
 {% if feed_id %}
