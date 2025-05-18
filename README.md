@@ -7,8 +7,9 @@ PodInsights is a simple command-line tool that helps you transcribe podcast audi
 - Python 3.11+
 - [`faster-whisper`](https://github.com/guillaumekln/faster-whisper) installed for audio transcription
 - [`openai`](https://pypi.org/project/openai/) and a valid `OPENAI_API_KEY` environment variable
+- Optional for the web interface: [`Flask`](https://palletsprojects.com/p/flask/), [`feedparser`](https://pypi.org/project/feedparser/), and [`requests`](https://pypi.org/project/requests/)
 
-## Usage
+## Usage (CLI)
 
 ```bash
 python podinsights.py path/to/podcast.mp3
@@ -24,3 +25,15 @@ The JSON file contains three fields:
 - `transcript` – the full transcript of the audio
 - `summary` – the generated summary text
 - `action_items` – a list of extracted action items
+
+## Usage (Web UI)
+
+A lightweight Flask application is provided in `podinsights_web.py`. It allows you to enter a podcast RSS feed URL, list the available episodes, and process an episode directly from your browser. Install the extra dependencies and run the app:
+
+```bash
+pip install flask feedparser requests
+python podinsights_web.py
+```
+
+Navigate to `http://localhost:5000` and provide an RSS feed URL. You can then select an episode to download and analyze using the same logic as the CLI tool.
+
