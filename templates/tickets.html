@@ -4,10 +4,26 @@
 {% block content %}
 {% if tickets %}
 <table>
-    <tr><th>Episode</th><th>Action Item</th><th>Ticket</th></tr>
+    <tr>
+        <th>Episode</th>
+        <th>Play</th>
+        <th>Summary</th>
+        <th>Action Item</th>
+        <th>Ticket</th>
+    </tr>
     {% for t in tickets %}
     <tr>
-        <td>{{ t.episode_title }}</td>
+        <td>
+            <a href="{{ url_for('process_episode', url=t.episode_url, title=t.episode_title, feed_id=t.feed_id) }}">
+                {{ t.episode_title }}
+            </a>
+        </td>
+        <td>
+            <audio controls preload="none" src="{{ t.episode_url }}">
+                Your browser does not support the audio element.
+            </audio>
+        </td>
+        <td>{{ t.episode_summary|truncate(200) }}</td>
         <td>{{ t.action_item }}</td>
         <td><a href="{{ t.ticket_url }}" target="_blank">{{ t.ticket_key }}</a></td>
     </tr>

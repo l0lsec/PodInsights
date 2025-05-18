@@ -40,6 +40,8 @@ Navigate to `http://localhost:5000` and add an RSS feed URL. Stored feeds are li
 
 Episode descriptions and any images provided by the feed are displayed next to each title to help you identify episodes before processing.
 
+You can listen to any episode directly from the browser. Each episode row now includes a small audio player so you can preview the content before processing or reviewing tickets.
+
 Processed episodes are stored in a local SQLite database (`episodes.db`). Each episode records the transcript, summary, and action items. The feed view reports whether these pieces of information have been extracted.
 
 

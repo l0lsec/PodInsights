@@ -10,6 +10,7 @@
         <th>Title</th>
         <th>Description</th>
         <th>Image</th>
+        <th>Play</th>
         <th>Transcribed</th>
         <th>Summarized</th>
         <th>Actions</th>
@@ -20,6 +21,11 @@
         <td>{{ ep.title }}</td>
         <td>{{ ep.description }}</td>
         <td>{% if ep.image %}<img src="{{ ep.image }}" alt="image" width="100">{% endif %}</td>
+        <td>
+            <audio controls preload="none" src="{{ ep.enclosure }}">
+                Your browser does not support the audio element.
+            </audio>
+        </td>
         <td>{% if ep.status.transcribed %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
         <td>{% if ep.status.summarized %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
         <td>{% if ep.status.actions %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>

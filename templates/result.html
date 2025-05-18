@@ -2,6 +2,9 @@
 {% block title %}{{ title }}{% endblock %}
 {% block header %}{{ title }}{% endblock %}
 {% block content %}
+<audio controls src="{{ url }}" style="width: 100%; margin-bottom: 1em;">
+    Your browser does not support the audio element.
+</audio>
 <div class="tile-container">
     <div class="tile">
         <h2>Summary</h2>
