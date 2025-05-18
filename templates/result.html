@@ -5,6 +5,9 @@
 <audio controls src="{{ url }}" class="w-100 mb-3">
     Your browser does not support the audio element.
 </audio>
+{% if description %}
+<p class="mb-4">{{ description }}</p>
+{% endif %}
 <div class="row gy-4">
     <div class="col-md-6">
         <h2>Summary</h2>

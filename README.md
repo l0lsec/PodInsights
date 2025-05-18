@@ -59,6 +59,7 @@ python podinsights_web.py
 
 Navigate to `http://localhost:5001` and add an RSS feed URL. Stored feeds are listed on the home page so you can return to them later. Selecting a feed shows the episodes along with their processing status.
 When you process an episode a small overlay indicates progress until the results are displayed.
+The episode description is shown at the top of the results page so you have context when reviewing the summary and action items.
 
 Episode descriptions and any images provided by the feed are displayed next to each title to help you identify episodes before processing.
 
