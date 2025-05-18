@@ -11,6 +11,8 @@ from database import (
     add_feed,
     list_feeds,
     get_feed_by_id,
+    add_ticket,
+    list_tickets,
 )
 from podinsights import (
     transcribe_audio,
@@ -121,7 +123,16 @@ def process_episode():
     if existing:
         summary = existing["summary"]
         actions = existing["action_items"].splitlines()
-        return render_template('result.html', title=existing["title"], summary=summary, actions=actions, feed_id=feed_id)
+        tickets = list_tickets(existing["id"])
+        return render_template(
+            'result.html',
+            title=existing["title"],
+            summary=summary,
+            actions=actions,
+            feed_id=feed_id,
+            url=audio_url,
+            tickets=tickets,
+        )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         audio_path = os.path.join(tmpdir, 'episode.mp3')
@@ -136,23 +147,45 @@ def process_episode():
         out_path = os.path.join(tmpdir, 'results.json')
         write_results_json(transcript, summary, actions, out_path)
         save_episode(audio_url, title, transcript, summary, actions, feed_id)
-    return render_template('result.html', title=title, summary=summary, actions=actions, feed_id=feed_id)
+    return render_template(
+        'result.html',
+        title=title,
+        summary=summary,
+        actions=actions,
+        feed_id=feed_id,
+        url=audio_url,
+        tickets=[],
+    )
 
 
 @app.route('/create_jira', methods=['POST'])
 def create_jira():
     """Create JIRA tickets for the selected action items."""
     items = request.form.getlist('items')
+    episode_url = request.form.get('episode_url')
     if not items:
         return redirect(request.referrer or url_for('index'))
+    episode = get_episode(episode_url) if episode_url else None
+    episode_id = episode['id'] if episode else None
     created = []
     for item in items:
         try:
             issue = create_jira_issue(item, item)
-            created.append(issue.get('key', ''))
+            key = issue.get('key', '')
+            ticket_url = f"{os.environ.get('JIRA_BASE_URL')}/browse/{key}" if key else ''
+            if episode_id is not None and key:
+                add_ticket(episode_id, item, key, ticket_url)
+            created.append({'key': key, 'url': ticket_url})
         except Exception as exc:  # pragma: no cover - external call
-            created.append(f'Error: {exc}')
+            created.append({'error': str(exc)})
     return render_template('jira_result.html', created=created)
+
+
+@app.route('/tickets')
+def view_tickets():
+    """Display all created JIRA tickets."""
+    tickets = list_tickets()
+    return render_template('tickets.html', tickets=tickets)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5001)))

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}JIRA Tickets{% endblock %}
+{% block header %}JIRA Tickets{% endblock %}
+{% block content %}
+{% if tickets %}
+<table>
+    <tr><th>Episode</th><th>Action Item</th><th>Ticket</th></tr>
+    {% for t in tickets %}
+    <tr>
+        <td>{{ t.episode_title }}</td>
+        <td>{{ t.action_item }}</td>
+        <td><a href="{{ t.ticket_url }}" target="_blank">{{ t.ticket_key }}</a></td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No tickets found.</p>
+{% endif %}
+{% endblock %}

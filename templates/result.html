@@ -11,6 +11,7 @@
         <h2>Action Items</h2>
         <form method="post" action="{{ url_for('create_jira') }}">
             <input type="hidden" name="title" value="{{ title }}">
+            <input type="hidden" name="episode_url" value="{{ url }}">
             <ul>
             {% for item in actions %}
                 <li>
@@ -23,6 +24,14 @@
             </ul>
             <input type="submit" value="Create JIRA Tickets">
         </form>
+        {% if tickets %}
+        <h3>JIRA Tickets</h3>
+        <ul>
+        {% for t in tickets %}
+            <li><a href="{{ t.ticket_url }}" target="_blank">{{ t.ticket_key }}</a> - {{ t.action_item }}</li>
+        {% endfor %}
+        </ul>
+        {% endif %}
     </div>
 </div>
 {% if feed_id %}
