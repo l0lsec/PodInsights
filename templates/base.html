@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>{% block title %}PodInsights{% endblock %}</title>
+    <link rel="stylesheet" href="https://unpkg.com/typeset.css/dist/typeset.min.css">
+    <style>
+        body { margin: 2em; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ccc; padding: 0.5em; text-align: left; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .processed { color: green; }
+        pre { white-space: pre-wrap; }
+    </style>
+</head>
+<body class="typeset">
+    <header>
+        <h1>{% block header %}PodInsights{% endblock %}</h1>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

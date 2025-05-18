@@ -40,3 +40,8 @@ Navigate to `http://localhost:5000` and add an RSS feed URL. Stored feeds are li
 
 Processed episodes are stored in a local SQLite database (`episodes.db`). Each episode records the transcript, summary, and action items. The feed view reports whether these pieces of information have been extracted.
 
+
+### Improved Web UI
+
+The web interface now loads the [Typeset](https://github.com/dobtco/typeset) CSS library via CDN, providing a cleaner and more modern layout.
+No extra configuration is necessary.
