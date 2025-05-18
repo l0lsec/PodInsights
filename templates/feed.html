@@ -21,7 +21,7 @@
         <td>{{ ep.title }}</td>
         <td class="description-cell">
             <span class="desc-short">{{ ep.short_description }}</span>
-            <span class="desc-full d-none">{{ ep.description }}</span>
+            <span class="desc-full d-none">{{ ep.description | safe }}</span>
             <button class="btn btn-link p-0 desc-toggle">See more</button>
         </td>
         <td>{% if ep.image %}<img src="{{ ep.image }}" alt="image" width="100">{% endif %}</td>
