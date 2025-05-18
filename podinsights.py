@@ -4,6 +4,8 @@ import json
 from collections import Counter
 from typing import List
 
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo")
+
 
 def transcribe_audio(audio_path: str) -> str:
     """Transcribe an audio file using the ``faster-whisper`` library.
@@ -38,7 +40,26 @@ def _tokenize_sentences(text: str) -> List[str]:
 
 
 def summarize_text(text: str, n_sentences: int = 3) -> str:
-    """Summarize the text using a simple frequency-based algorithm."""
+    """Summarize ``text`` using OpenAI if available, otherwise fall back to a
+    simple frequency based algorithm."""
+
+    try:
+        import openai  # type: ignore
+
+        if openai.api_key is None:
+            openai.api_key = os.getenv("OPENAI_API_KEY")
+
+        if openai.api_key:
+            response = openai.ChatCompletion.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": f"Summarize the following text:\n{text}"}],
+                temperature=0.2,
+            )
+            return response["choices"][0]["message"]["content"].strip()
+    except Exception:
+        pass
+
+    # fallback summarization
     sentences = _tokenize_sentences(text)
     if not sentences:
         return ""
@@ -51,15 +72,41 @@ def summarize_text(text: str, n_sentences: int = 3) -> str:
     top_sentences = sorted(sentence_scores, key=sentence_scores.get, reverse=True)[
         :n_sentences
     ]
-    return " " .join(top_sentences)
+    return " ".join(top_sentences)
 
 
 def extract_action_items(text: str) -> List[str]:
-    """Extract simple action items from the text.
+    """Extract action items from ``text`` using OpenAI when possible.
 
-    Sentences containing words like 'should', 'must', or phrases like 'need to'
-    are treated as potential action items.
-    """
+    If OpenAI is unavailable, fall back to a very basic keyword search."""
+
+    try:
+        import openai  # type: ignore
+
+        if openai.api_key is None:
+            openai.api_key = os.getenv("OPENAI_API_KEY")
+
+        if openai.api_key:
+            response = openai.ChatCompletion.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            "Extract a concise list of action items from the "
+                            "following text. Respond with one item per line "
+                            "and no additional commentary.\n" + text
+                        ),
+                    }
+                ],
+                temperature=0.2,
+            )
+            lines = response["choices"][0]["message"]["content"].splitlines()
+            return [ln.lstrip("- ").strip() for ln in lines if ln.strip()]
+    except Exception:
+        pass
+
+    # fallback keyword based extraction
     sentences = _tokenize_sentences(text)
     keywords = ["should", "must", "need to", "let's", "remember to"]
     actions = [

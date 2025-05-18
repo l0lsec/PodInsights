@@ -1,11 +1,12 @@
 # PodInsights
 
-PodInsights is a simple command-line tool that helps you transcribe podcast audio files and extract useful information from them. The current implementation relies on the [`faster-whisper`](https://github.com/guillaumekln/faster-whisper) library for transcription. It then creates a short summary and extracts potential action items from the transcript using basic text processing.
+PodInsights is a simple command-line tool that helps you transcribe podcast audio files and extract useful information from them. The current implementation relies on the [`faster-whisper`](https://github.com/guillaumekln/faster-whisper) library for transcription. By default it attempts to generate a concise summary and action items using OpenAI's chat models. If OpenAI is unavailable, it falls back to simple text processing.
 
 ## Requirements
 
 - Python 3.11+
 - [`faster-whisper`](https://github.com/guillaumekln/faster-whisper) installed for audio transcription
+- [`openai`](https://pypi.org/project/openai/) and an `OPENAI_API_KEY` environment variable if you want AI-powered summaries
 
 ## Usage
 
@@ -13,7 +14,7 @@ PodInsights is a simple command-line tool that helps you transcribe podcast audi
 python podinsights.py path/to/podcast.mp3
 ```
 
-The script will attempt to transcribe the audio file using `faster-whisper`, generate a short summary of the conversation, and list action items detected in the transcript. It also writes these results to a JSON file next to the audio by default. You can specify a custom output path with the `--json` option.
+The script will attempt to transcribe the audio file using `faster-whisper`, then ask OpenAI to produce a short summary and extract action items. If OpenAI is unavailable, it falls back to a simple built-in algorithm. Results are also written to a JSON file next to the audio by default. You can specify a custom output path with the `--json` option.
 
 > **Note**: If the `faster-whisper` package is not installed, the script will raise a `NotImplementedError`. You can install it via `pip install faster-whisper` if you have internet access.
 
