@@ -1,4 +1,24 @@
-# PodInsights
+**PodInsights: AI-Powered Podcast Transcription, Summarization & Action Item Extraction Tool**
+
+PodInsights is the ultimate podcast analysis tool for creators, researchers, and business professionals who need to extract valuable insights from audio content. Our tool combines state-of-the-art speech recognition with powerful AI summarization to transform hours of podcast content into actionable intelligence.
+
+### Key Features
+
+- **Accurate Podcast Transcription** - Convert any podcast episode into searchable text with industry-leading accuracy
+- **Intelligent Summarization** - Automatically generate concise summaries capturing the core message of any episode
+- **Action Item Extraction** - Never miss important tasks or follow-ups mentioned in podcast discussions
+- **JIRA Integration** - Seamlessly create tickets from extracted action items for project management
+- **RSS Feed Support** - Process entire podcast feeds directly from their source
+
+### Use Cases
+
+- Content creators tracking competitive analysis from industry podcasts
+- Researchers analyzing interview content for qualitative research
+- Business professionals extracting action items from recorded meetings
+- Podcast fans who want to quickly understand episode content before listening
+- Knowledge workers converting audio information into structured text data
+
+*PodInsights - Transforming podcast content into actionable intelligence.*
 
 PodInsights is a simple command-line tool that helps you transcribe podcast audio files and extract useful information from them. The current implementation relies on the [`faster-whisper`](https://github.com/guillaumekln/faster-whisper) library for transcription. Summarization and action item extraction are performed exclusively using OpenAI's chat models.
 
@@ -36,7 +56,7 @@ pip install flask feedparser requests
 python podinsights_web.py
 ```
 
-Navigate to `http://localhost:5000` and add an RSS feed URL. Stored feeds are listed on the home page so you can return to them later. Selecting a feed shows the episodes along with their processing status.
+Navigate to `http://localhost:5001` and add an RSS feed URL. Stored feeds are listed on the home page so you can return to them later. Selecting a feed shows the episodes along with their processing status.
 
 Episode descriptions and any images provided by the feed are displayed next to each title to help you identify episodes before processing.
 
@@ -44,12 +64,6 @@ You can listen to any episode directly from the browser. Each episode row now in
 
 Processed episodes are stored in a local SQLite database (`episodes.db`). Each episode records the transcript, summary, and action items. The feed view reports whether these pieces of information have been extracted.
 
-
-### Improved Web UI
-
-The web interface now loads the [Typeset](https://github.com/dobtco/typeset) CSS library via CDN, providing a cleaner and more modern layout.
-No extra configuration is necessary. A small navigation bar now appears on each
-page so you can quickly return to the list of feeds.
 
 ### Creating JIRA Tickets
 
@@ -66,3 +80,11 @@ Select the action items you want to track and click **Create JIRA Tickets**.
 Created issues are stored locally so you can access them later. When viewing an
 episode's results the associated JIRA tickets are listed with links. A dedicated
 "Tickets" page in the web interface lists every issue that has been created.
+
+## Credits
+
+Developed by Sedric "Show Up Show Out" Louissaint from Show Up Show Out Security. 
+
+Learn more about Show Up Show Out Security at [susos.co](https://susos.co).
+
+---
