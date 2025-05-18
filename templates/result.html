@@ -1,27 +1,18 @@
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <title>{{ title }}</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 2em; }
-        h1 { color: #333; }
-    </style>
-</head>
-<body>
-    <h1>{{ title }}</h1>
-    <h2>Summary</h2>
-    <pre>{{ summary }}</pre>
-    <h2>Action Items</h2>
-    <ul>
-    {% for item in actions %}
-        <li>{{ item }}</li>
-    {% endfor %}
-    </ul>
-    {% if feed_id %}
-    <p><a href="{{ url_for('view_feed', feed_id=feed_id) }}">Back to feed</a></p>
-    {% else %}
-    <p><a href="{{ url_for('index') }}">Home</a></p>
-    {% endif %}
-</body>
-</html>
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block header %}{{ title }}{% endblock %}
+{% block content %}
+<h2>Summary</h2>
+<pre>{{ summary }}</pre>
+<h2>Action Items</h2>
+<ul>
+{% for item in actions %}
+    <li>{{ item }}</li>
+{% endfor %}
+</ul>
+{% if feed_id %}
+<p><a href="{{ url_for('view_feed', feed_id=feed_id) }}">Back to feed</a></p>
+{% else %}
+<p><a href="{{ url_for('index') }}">Home</a></p>
+{% endif %}
+{% endblock %}
