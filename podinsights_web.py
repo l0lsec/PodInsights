@@ -119,6 +119,7 @@ def process_episode():
     feed_id = request.args.get('feed_id', type=int)
     if not audio_url:
         return redirect(url_for('index'))
+    app.logger.info("Processing episode: %s", audio_url)
     existing = get_episode(audio_url)
     if existing:
         summary = existing["summary"]
@@ -141,9 +142,17 @@ def process_episode():
             with open(audio_path, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
+        app.logger.info("Transcribing audio")
         transcript = transcribe_audio(audio_path)
+        app.logger.info("Transcription complete")
+
+        app.logger.info("Generating summary")
         summary = summarize_text(transcript)
+        app.logger.info("Summary complete")
+
+        app.logger.info("Extracting action items")
         actions = extract_action_items(transcript)
+        app.logger.info("Action item extraction complete")
         out_path = os.path.join(tmpdir, 'results.json')
         write_results_json(transcript, summary, actions, out_path)
         save_episode(audio_url, title, transcript, summary, actions, feed_id)

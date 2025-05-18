@@ -29,7 +29,12 @@
         <td>{% if ep.status.transcribed %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
         <td>{% if ep.status.summarized %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
         <td>{% if ep.status.actions %}<span class="processed">Yes</span>{% else %}No{% endif %}</td>
-        <td><a href="{{ url_for('process_episode', url=ep.enclosure, title=ep.title, feed_id=feed.id) }}">Process</a></td>
+        <td>
+            <a
+                href="{{ url_for('process_episode', url=ep.enclosure, title=ep.title, feed_id=feed.id) }}"
+                data-processing="true"
+            >Process</a>
+        </td>
     </tr>
     {% endfor %}
 </table>
