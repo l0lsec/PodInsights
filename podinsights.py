@@ -1,10 +1,18 @@
 import os
-import re
 import json
-from collections import Counter
+import logging
 from typing import List
 
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo")
+
+logger = logging.getLogger(__name__)
+
+
+def configure_logging(verbose: bool = False) -> None:
+    """Configure application logging."""
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(level=level, format="%(asctime)s [%(levelname)s] %(message)s")
+    logger.debug("Logging configured. Level=%s", logging.getLevelName(level))
 
 
 def transcribe_audio(audio_path: str) -> str:
@@ -20,28 +28,28 @@ def transcribe_audio(audio_path: str) -> str:
     str
         The transcribed text.
     """
+    logger.debug("Starting transcription of %s", audio_path)
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:  # pragma: no cover - optional dependency
+        logger.exception("faster-whisper not installed")
         raise NotImplementedError(
             "Audio transcription requires the `faster-whisper` package."
         ) from exc
 
-    # Use the small model for a reasonable default
-    model = WhisperModel("base", device="cpu")
-    segments, _ = model.transcribe(audio_path)
-    transcript = " ".join(segment.text.strip() for segment in segments)
-    return transcript
+    try:
+        model = WhisperModel("base", device="cpu")
+        segments, _ = model.transcribe(audio_path)
+        transcript = " ".join(segment.text.strip() for segment in segments)
+        logger.debug("Transcription finished with %d segments", len(segments))
+        return transcript
+    except Exception as exc:
+        logger.exception("Transcription failed")
+        raise RuntimeError("Failed to transcribe audio") from exc
 
 
-def _tokenize_sentences(text: str) -> List[str]:
-    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
-    return [s for s in sentences if s]
-
-
-def summarize_text(text: str, n_sentences: int = 3) -> str:
-    """Summarize ``text`` using OpenAI if available, otherwise fall back to a
-    simple frequency based algorithm."""
+def summarize_text(text: str) -> str:
+    """Summarize ``text`` using OpenAI."""
 
     try:
         import openai  # type: ignore
@@ -49,36 +57,25 @@ def summarize_text(text: str, n_sentences: int = 3) -> str:
         if openai.api_key is None:
             openai.api_key = os.getenv("OPENAI_API_KEY")
 
-        if openai.api_key:
-            response = openai.ChatCompletion.create(
-                model=OPENAI_MODEL,
-                messages=[{"role": "user", "content": f"Summarize the following text:\n{text}"}],
-                temperature=0.2,
-            )
-            return response["choices"][0]["message"]["content"].strip()
-    except Exception:
-        pass
+        if not openai.api_key:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
 
-    # fallback summarization
-    sentences = _tokenize_sentences(text)
-    if not sentences:
-        return ""
-
-    words = re.findall(r"\w+", text.lower())
-    freqs = Counter(words)
-    sentence_scores = {
-        s: sum(freqs[w] for w in re.findall(r"\w+", s.lower())) for s in sentences
-    }
-    top_sentences = sorted(sentence_scores, key=sentence_scores.get, reverse=True)[
-        :n_sentences
-    ]
-    return " ".join(top_sentences)
+        logger.debug("Requesting summary from OpenAI")
+        response = openai.ChatCompletion.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": f"Summarize the following text:\n{text}"}],
+            temperature=0.2,
+        )
+        summary = response["choices"][0]["message"]["content"].strip()
+        logger.debug("Summary received")
+        return summary
+    except Exception as exc:
+        logger.exception("OpenAI summarization failed")
+        raise RuntimeError("Failed to summarize text with OpenAI") from exc
 
 
 def extract_action_items(text: str) -> List[str]:
-    """Extract action items from ``text`` using OpenAI when possible.
-
-    If OpenAI is unavailable, fall back to a very basic keyword search."""
+    """Extract action items from ``text`` using OpenAI."""
 
     try:
         import openai  # type: ignore
@@ -86,35 +83,31 @@ def extract_action_items(text: str) -> List[str]:
         if openai.api_key is None:
             openai.api_key = os.getenv("OPENAI_API_KEY")
 
-        if openai.api_key:
-            response = openai.ChatCompletion.create(
-                model=OPENAI_MODEL,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            "Extract a concise list of action items from the "
-                            "following text. Respond with one item per line "
-                            "and no additional commentary.\n" + text
-                        ),
-                    }
-                ],
-                temperature=0.2,
-            )
-            lines = response["choices"][0]["message"]["content"].splitlines()
-            return [ln.lstrip("- ").strip() for ln in lines if ln.strip()]
-    except Exception:
-        pass
+        if not openai.api_key:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
 
-    # fallback keyword based extraction
-    sentences = _tokenize_sentences(text)
-    keywords = ["should", "must", "need to", "let's", "remember to"]
-    actions = [
-        s
-        for s in sentences
-        if any(k in s.lower() for k in keywords)
-    ]
-    return actions
+        logger.debug("Requesting action items from OpenAI")
+        response = openai.ChatCompletion.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Extract a concise list of action items from the "
+                        "following text. Respond with one item per line "
+                        "and no additional commentary.\n" + text
+                    ),
+                }
+            ],
+            temperature=0.2,
+        )
+        lines = response["choices"][0]["message"]["content"].splitlines()
+        actions = [ln.lstrip("- ").strip() for ln in lines if ln.strip()]
+        logger.debug("Action items received: %d", len(actions))
+        return actions
+    except Exception as exc:
+        logger.exception("OpenAI action item extraction failed")
+        raise RuntimeError("Failed to extract action items with OpenAI") from exc
 
 
 def write_results_json(transcript: str, summary: str, actions: List[str], output_path: str) -> None:
@@ -125,29 +118,34 @@ def write_results_json(transcript: str, summary: str, actions: List[str], output
         "summary": summary,
         "action_items": actions,
     }
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.debug("Results written to %s", output_path)
+    except Exception as exc:
+        logger.exception("Failed to write results JSON")
+        raise RuntimeError("Could not write results JSON") from exc
 
 
-def main(audio_path: str, json_path: str | None = None) -> None:
+def main(audio_path: str, json_path: str | None = None, verbose: bool = False) -> None:
+    configure_logging(verbose)
+
     try:
         transcript = transcribe_audio(audio_path)
-    except NotImplementedError as e:
-        print(e)
-        return
+        summary = summarize_text(transcript)
+        actions = extract_action_items(transcript)
 
-    summary = summarize_text(transcript)
-    actions = extract_action_items(transcript)
+        logger.info("Summary:\n%s", summary)
+        logger.info("Action Items:")
+        for item in actions:
+            logger.info("- %s", item)
 
-    print("Summary:\n", summary)
-    print("\nAction Items:")
-    for item in actions:
-        print("-", item)
-
-    if json_path is None:
-        json_path = os.path.splitext(audio_path)[0] + ".json"
-    write_results_json(transcript, summary, actions, json_path)
-    print(f"\nResults written to {json_path}")
+        if json_path is None:
+            json_path = os.path.splitext(audio_path)[0] + ".json"
+        write_results_json(transcript, summary, actions, json_path)
+        logger.info("Results written to %s", json_path)
+    except Exception as exc:
+        logger.exception("Processing failed")
 
 
 if __name__ == "__main__":
@@ -162,5 +160,11 @@ if __name__ == "__main__":
             "Optional path to save results as JSON; defaults to <audio>.json"
         ),
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose debug logging",
+    )
     args = parser.parse_args()
-    main(args.audio, args.json)
+    main(args.audio, args.json, args.verbose)
