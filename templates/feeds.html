@@ -2,20 +2,24 @@
 {% block title %}PodInsights Feeds{% endblock %}
 {% block header %}Stored Podcast Feeds{% endblock %}
 {% block content %}
-<form method="post" class="typeset">
-    <label for="feed_url">Add Feed URL:</label>
-    <input type="text" name="feed_url" id="feed_url" size="60">
-    <input type="submit" value="Add">
+<form method="post" class="row g-2 mb-3">
+    <div class="col-auto">
+        <label for="feed_url" class="visually-hidden">Add Feed URL</label>
+        <input type="text" class="form-control" name="feed_url" id="feed_url" size="60" placeholder="Feed URL">
+    </div>
+    <div class="col-auto">
+        <input type="submit" class="btn btn-primary" value="Add">
+    </div>
 </form>
 {% if feeds %}
 <h2>Feeds</h2>
-<table>
+<table class="table table-striped">
     <tr><th>Title</th><th>URL</th><th>View</th></tr>
     {% for f in feeds %}
     <tr>
         <td>{{ f.title }}</td>
         <td>{{ f.url }}</td>
-        <td><a href="{{ url_for('view_feed', feed_id=f.id) }}">Open</a></td>
+        <td><a class="btn btn-sm btn-primary" href="{{ url_for('view_feed', feed_id=f.id) }}">Open</a></td>
     </tr>
     {% endfor %}
 </table>

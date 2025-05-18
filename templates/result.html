@@ -2,17 +2,17 @@
 {% block title %}{{ title }}{% endblock %}
 {% block header %}{{ title }}{% endblock %}
 {% block content %}
-<audio controls src="{{ url }}" style="width: 100%; margin-bottom: 1em;">
+<audio controls src="{{ url }}" class="w-100 mb-3">
     Your browser does not support the audio element.
 </audio>
-<div class="tile-container">
-    <div class="tile">
+<div class="row gy-4">
+    <div class="col-md-6">
         <h2>Summary</h2>
-        <pre>{{ summary }}</pre>
+        <pre class="bg-light p-3 rounded">{{ summary }}</pre>
     </div>
-    <div class="tile">
+    <div class="col-md-6">
         <h2>Action Items</h2>
-        <form method="post" action="{{ url_for('create_jira') }}">
+        <form method="post" action="{{ url_for('create_jira') }}" class="mb-3">
             <input type="hidden" name="title" value="{{ title }}">
             <input type="hidden" name="episode_url" value="{{ url }}">
             <ul>
@@ -25,7 +25,7 @@
                 </li>
             {% endfor %}
             </ul>
-            <input type="submit" value="Create JIRA Tickets">
+            <input type="submit" class="btn btn-primary" value="Create JIRA Tickets">
         </form>
         {% if tickets %}
         <h3>JIRA Tickets</h3>
@@ -38,8 +38,8 @@
     </div>
 </div>
 {% if feed_id %}
-<p><a href="{{ url_for('view_feed', feed_id=feed_id) }}">Back to feed</a></p>
+<p><a class="btn btn-secondary" href="{{ url_for('view_feed', feed_id=feed_id) }}">Back to feed</a></p>
 {% else %}
-<p><a href="{{ url_for('index') }}">Home</a></p>
+<p><a class="btn btn-secondary" href="{{ url_for('index') }}">Home</a></p>
 {% endif %}
 {% endblock %}
