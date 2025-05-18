@@ -19,7 +19,11 @@
     {% for ep in episodes %}
     <tr>
         <td>{{ ep.title }}</td>
-        <td>{{ ep.description }}</td>
+        <td class="description-cell">
+            <span class="desc-short">{{ ep.short_description }}</span>
+            <span class="desc-full d-none">{{ ep.description }}</span>
+            <button class="btn btn-link p-0 desc-toggle">See more</button>
+        </td>
         <td>{% if ep.image %}<img src="{{ ep.image }}" alt="image" width="100">{% endif %}</td>
         <td>
             <audio controls preload="none" src="{{ ep.enclosure }}">
@@ -37,6 +41,19 @@
         </td>
     </tr>
     {% endfor %}
-</table>
-{% endif %}
+  </table>
+  {% endif %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.desc-toggle').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var shortEl = btn.parentElement.querySelector('.desc-short');
+            var fullEl = btn.parentElement.querySelector('.desc-full');
+            shortEl.classList.toggle('d-none');
+            fullEl.classList.toggle('d-none');
+            btn.textContent = btn.textContent.trim() === 'See more' ? 'See less' : 'See more';
+        });
+    });
+});
+</script>
 {% endblock %}
