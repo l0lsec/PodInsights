@@ -38,10 +38,26 @@ python podinsights_web.py
 
 Navigate to `http://localhost:5000` and add an RSS feed URL. Stored feeds are listed on the home page so you can return to them later. Selecting a feed shows the episodes along with their processing status.
 
+Episode descriptions and any images provided by the feed are displayed next to each title to help you identify episodes before processing.
+
 Processed episodes are stored in a local SQLite database (`episodes.db`). Each episode records the transcript, summary, and action items. The feed view reports whether these pieces of information have been extracted.
 
 
 ### Improved Web UI
 
 The web interface now loads the [Typeset](https://github.com/dobtco/typeset) CSS library via CDN, providing a cleaner and more modern layout.
-No extra configuration is necessary.
+No extra configuration is necessary. A small navigation bar now appears on each
+page so you can quickly return to the list of feeds.
+
+### Creating JIRA Tickets
+
+You can create JIRA issues directly from the action items listed on the result
+page. Set the following environment variables so the web app can access your
+JIRA Cloud instance:
+
+- `JIRA_BASE_URL` – e.g. `https://example.atlassian.net`
+- `JIRA_EMAIL` – the email associated with an API token
+- `JIRA_API_TOKEN` – your JIRA API token
+- `JIRA_PROJECT_KEY` – project key for new issues
+
+Select the action items you want to track and click **Create JIRA Tickets**.

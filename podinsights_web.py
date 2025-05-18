@@ -24,6 +24,28 @@ app = Flask(__name__)
 configure_logging()
 init_db()
 
+def create_jira_issue(summary: str, description: str) -> dict:
+    """Create a JIRA issue using credentials from environment variables."""
+    base = os.environ.get("JIRA_BASE_URL")
+    email = os.environ.get("JIRA_EMAIL")
+    token = os.environ.get("JIRA_API_TOKEN")
+    project = os.environ.get("JIRA_PROJECT_KEY")
+    if not all([base, email, token, project]):
+        raise RuntimeError("JIRA configuration is missing")
+
+    url = f"{base}/rest/api/3/issue"
+    data = {
+        "fields": {
+            "project": {"key": project},
+            "summary": summary,
+            "description": description,
+            "issuetype": {"name": "Task"},
+        }
+    }
+    resp = requests.post(url, json=data, auth=(email, token))
+    resp.raise_for_status()
+    return resp.json()
+
 # Templates are stored in the ``templates`` directory
 
 @app.route('/', methods=['GET', 'POST'])
@@ -55,7 +77,23 @@ def view_feed(feed_id: int):
             'summarized': ep_db is not None and bool(ep_db['summary']),
             'actions': ep_db is not None and bool(ep_db['action_items']),
         }
-        episodes.append({'title': entry.title, 'enclosure': url, 'status': status})
+        desc = entry.get('summary') or entry.get('description', '')
+        img = None
+        if hasattr(entry, 'image') and getattr(entry.image, 'href', None):
+            img = entry.image.href
+        elif entry.get('itunes_image'):
+            img = entry.itunes_image.get('href') if isinstance(entry.itunes_image, dict) else entry.itunes_image
+        elif entry.get('media_thumbnail'):
+            img = entry.media_thumbnail[0].get('url')
+        elif entry.get('media_content'):
+            img = entry.media_content[0].get('url')
+        episodes.append({
+            'title': entry.title,
+            'description': desc,
+            'image': img,
+            'enclosure': url,
+            'status': status,
+        })
     return render_template('feed.html', feed=feed, episodes=episodes)
 
 @app.route('/process')
@@ -85,6 +123,22 @@ def process_episode():
         write_results_json(transcript, summary, actions, out_path)
         save_episode(audio_url, title, transcript, summary, actions, feed_id)
     return render_template('result.html', title=title, summary=summary, actions=actions, feed_id=feed_id)
+
+
+@app.route('/create_jira', methods=['POST'])
+def create_jira():
+    """Create JIRA tickets for the selected action items."""
+    items = request.form.getlist('items')
+    if not items:
+        return redirect(request.referrer or url_for('index'))
+    created = []
+    for item in items:
+        try:
+            issue = create_jira_issue(item, item)
+            created.append(issue.get('key', ''))
+        except Exception as exc:  # pragma: no cover - external call
+            created.append(f'Error: {exc}')
+    return render_template('jira_result.html', created=created)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
