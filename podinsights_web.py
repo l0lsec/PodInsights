@@ -38,7 +38,21 @@ def create_jira_issue(summary: str, description: str) -> dict:
         "fields": {
             "project": {"key": project},
             "summary": summary,
-            "description": description,
+            "description": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": description
+                            }
+                        ]
+                    }
+                ]
+            },
             "issuetype": {"name": "Task"},
         }
     }
@@ -141,4 +155,4 @@ def create_jira():
     return render_template('jira_result.html', created=created)
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5001)))
