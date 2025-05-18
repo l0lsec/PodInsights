@@ -3,7 +3,7 @@ import json
 import logging
 from typing import List
 
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-40-mini")
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +40,9 @@ def transcribe_audio(audio_path: str) -> str:
     try:
         model = WhisperModel("base", device="cpu")
         segments, _ = model.transcribe(audio_path)
-        transcript = " ".join(segment.text.strip() for segment in segments)
-        logger.debug("Transcription finished with %d segments", len(segments))
+        segments_list = list(segments)  # Convert generator to list
+        transcript = " ".join(segment.text.strip() for segment in segments_list)
+        logger.debug("Transcription finished with %d segments", len(segments_list))
         return transcript
     except Exception as exc:
         logger.exception("Transcription failed")
