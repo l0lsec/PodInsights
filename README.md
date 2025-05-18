@@ -37,6 +37,7 @@ python podinsights.py path/to/podcast.mp3
 ```
 
 The script will attempt to transcribe the audio file using `faster-whisper`, then ask OpenAI to produce a short summary and extract action items. Results are also written to a JSON file next to the audio by default. You can specify a custom output path with the `--json` option. Use `--verbose` to enable debug logging.
+Progress messages are printed to the terminal so you can follow each step of the process.
 
 > **Note**: If the `faster-whisper` package is not installed, the script will raise a `NotImplementedError`. You can install it via `pip install faster-whisper` if you have internet access.
 > **Note**: Summarization and action item extraction require OpenAI access. Ensure `OPENAI_API_KEY` is set in your environment.
@@ -57,6 +58,7 @@ python podinsights_web.py
 ```
 
 Navigate to `http://localhost:5001` and add an RSS feed URL. Stored feeds are listed on the home page so you can return to them later. Selecting a feed shows the episodes along with their processing status.
+When you process an episode a small overlay indicates progress until the results are displayed.
 
 Episode descriptions and any images provided by the feed are displayed next to each title to help you identify episodes before processing.
 

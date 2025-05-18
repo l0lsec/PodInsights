@@ -130,9 +130,17 @@ def main(audio_path: str, json_path: str | None = None, verbose: bool = False) -
     configure_logging(verbose)
 
     try:
+        logger.info("Transcribing audio...")
         transcript = transcribe_audio(audio_path)
+        logger.info("Transcription complete")
+
+        logger.info("Generating summary...")
         summary = summarize_text(transcript)
+        logger.info("Summary complete")
+
+        logger.info("Extracting action items...")
         actions = extract_action_items(transcript)
+        logger.info("Action item extraction complete")
 
         logger.info("Summary:\n%s", summary)
         logger.info("Action Items:")
