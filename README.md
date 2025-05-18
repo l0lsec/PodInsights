@@ -84,6 +84,8 @@ Created issues are stored locally so you can access them later. When viewing an
 episode's results the associated JIRA tickets are listed with links. A dedicated
 "Tickets" page in the web interface lists every issue that has been created.
 
+The web interface also provides a **Status** page listing all queued and processed episodes from every feed. Use the **Queue** link next to an episode to process it in the background and track its progress on the Status page.
+
 ## Credits
 
 Developed by Sedric "Show Up Show Out" Louissaint from Show Up Show Out Security. 

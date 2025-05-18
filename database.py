@@ -30,6 +30,7 @@ def init_db(db_path: str = DB_PATH) -> None:
                 transcript TEXT,
                 summary TEXT,
                 action_items TEXT,
+                status TEXT,
                 FOREIGN KEY(feed_id) REFERENCES feeds(id)
             )
             """
@@ -46,6 +47,12 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
+        # Ensure the episodes table has a status column for older DBs
+        cur = conn.execute("PRAGMA table_info(episodes)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "status" not in columns:
+            conn.execute("ALTER TABLE episodes ADD COLUMN status TEXT")
+            conn.execute("UPDATE episodes SET status = 'complete'")
         conn.commit()
 
 
@@ -109,10 +116,33 @@ def save_episode(
         conn.execute(
             """
             INSERT OR REPLACE INTO episodes
-                (url, title, transcript, summary, action_items, feed_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (url, title, transcript, summary, action_items, feed_id, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'complete')
             """,
             (url, title, transcript, summary, actions, feed_id),
+        )
+        conn.commit()
+
+
+def queue_episode(url: str, title: str, feed_id: int, db_path: str = DB_PATH) -> None:
+    """Queue an episode for processing."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO episodes (url, title, feed_id, status)
+            VALUES (?, ?, ?, 'queued')
+            """,
+            (url, title, feed_id),
+        )
+        conn.commit()
+
+
+def update_episode_status(url: str, status: str, db_path: str = DB_PATH) -> None:
+    """Update the processing status for an episode."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE episodes SET status = ? WHERE url = ?",
+            (status, url),
         )
         conn.commit()
 
@@ -123,6 +153,14 @@ def list_episodes(feed_id: int, db_path: str = DB_PATH) -> List[sqlite3.Row]:
         cur = conn.execute(
             "SELECT * FROM episodes WHERE feed_id = ? ORDER BY id", (feed_id,)
         )
+        return cur.fetchall()
+
+
+def list_all_episodes(db_path: str = DB_PATH) -> List[sqlite3.Row]:
+    """List episodes from all feeds ordered by id."""
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("SELECT * FROM episodes ORDER BY id")
         return cur.fetchall()
 
 
