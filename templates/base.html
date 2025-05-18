@@ -11,6 +11,23 @@
         tr:nth-child(even) { background-color: #f9f9f9; }
         .processed { color: green; }
         pre { white-space: pre-wrap; }
+        .tile-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1em;
+            margin-top: 1em;
+        }
+        .tile {
+            border: 1px solid #ccc;
+            background-color: #fafafa;
+            padding: 1em;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            flex: 1 1 45%;
+        }
+        .tile h2 {
+            margin-top: 0;
+        }
     </style>
 </head>
 <body class="typeset">

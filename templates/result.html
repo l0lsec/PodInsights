@@ -2,14 +2,20 @@
 {% block title %}{{ title }}{% endblock %}
 {% block header %}{{ title }}{% endblock %}
 {% block content %}
-<h2>Summary</h2>
-<pre>{{ summary }}</pre>
-<h2>Action Items</h2>
-<ul>
-{% for item in actions %}
-    <li>{{ item }}</li>
-{% endfor %}
-</ul>
+<div class="tile-container">
+    <div class="tile">
+        <h2>Summary</h2>
+        <pre>{{ summary }}</pre>
+    </div>
+    <div class="tile">
+        <h2>Action Items</h2>
+        <ul>
+        {% for item in actions %}
+            <li>{{ item }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+</div>
 {% if feed_id %}
 <p><a href="{{ url_for('view_feed', feed_id=feed_id) }}">Back to feed</a></p>
 {% else %}
