@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import tempfile
 from flask import Flask, request, render_template, redirect, url_for
+import re
 import feedparser
 import requests
 from database import (
@@ -25,6 +26,18 @@ from podinsights import (
 app = Flask(__name__)
 configure_logging()
 init_db()
+
+
+def make_short_description(text: str, limit: int = 200) -> str:
+    """Return a short preview from the provided text."""
+    if not text:
+        return ""
+    text = text.strip()
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    short = " ".join(sentences[:2])
+    if len(short) > limit:
+        short = short[:limit].rstrip() + "..."
+    return short
 
 def create_jira_issue(summary: str, description: str) -> dict:
     """Create a JIRA issue using credentials from environment variables."""
@@ -106,6 +119,7 @@ def view_feed(feed_id: int):
         episodes.append({
             'title': entry.title,
             'description': desc,
+            'short_description': make_short_description(desc),
             'image': img,
             'enclosure': url,
             'status': status,
