@@ -5,6 +5,7 @@ from flask import Flask, request, render_template, redirect, url_for
 import re
 import feedparser
 import requests
+from html import unescape
 from database import (
     init_db,
     get_episode,
@@ -26,6 +27,16 @@ from podinsights import (
 app = Flask(__name__)
 configure_logging()
 init_db()
+
+
+def strip_html(text: str) -> str:
+    """Return plain text with HTML tags removed."""
+    if not text:
+        return ""
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"</p\s*>", "\n", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
+    return unescape(text).strip()
 
 
 def make_short_description(text: str, limit: int = 200) -> str:
@@ -107,6 +118,7 @@ def view_feed(feed_id: int):
             'actions': ep_db is not None and bool(ep_db['action_items']),
         }
         desc = entry.get('summary') or entry.get('description', '')
+        clean_desc = strip_html(desc)
         img = None
         if hasattr(entry, 'image') and getattr(entry.image, 'href', None):
             img = entry.image.href
@@ -119,7 +131,7 @@ def view_feed(feed_id: int):
         episodes.append({
             'title': entry.title,
             'description': desc,
-            'short_description': make_short_description(desc),
+            'short_description': make_short_description(clean_desc),
             'image': img,
             'enclosure': url,
             'status': status,
