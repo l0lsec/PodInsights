@@ -53,21 +53,20 @@ def summarize_text(text: str) -> str:
     """Summarize ``text`` using OpenAI."""
 
     try:
-        import openai  # type: ignore
+        from openai import OpenAI
 
-        if openai.api_key is None:
-            openai.api_key = os.getenv("OPENAI_API_KEY")
-
-        if not openai.api_key:
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        if not client.api_key:
             raise RuntimeError("OPENAI_API_KEY is not configured")
 
         logger.debug("Requesting summary from OpenAI")
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[{"role": "user", "content": f"Summarize the following text:\n{text}"}],
             temperature=0.2,
         )
-        summary = response["choices"][0]["message"]["content"].strip()
+        summary = response.choices[0].message.content.strip()
         logger.debug("Summary received")
         return summary
     except Exception as exc:
@@ -79,16 +78,15 @@ def extract_action_items(text: str) -> List[str]:
     """Extract action items from ``text`` using OpenAI."""
 
     try:
-        import openai  # type: ignore
+        from openai import OpenAI
 
-        if openai.api_key is None:
-            openai.api_key = os.getenv("OPENAI_API_KEY")
-
-        if not openai.api_key:
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        if not client.api_key:
             raise RuntimeError("OPENAI_API_KEY is not configured")
 
         logger.debug("Requesting action items from OpenAI")
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[
                 {
@@ -102,7 +100,7 @@ def extract_action_items(text: str) -> List[str]:
             ],
             temperature=0.2,
         )
-        lines = response["choices"][0]["message"]["content"].splitlines()
+        lines = response.choices[0].message.content.splitlines()
         actions = [ln.lstrip("- ").strip() for ln in lines if ln.strip()]
         logger.debug("Action items received: %d", len(actions))
         return actions
