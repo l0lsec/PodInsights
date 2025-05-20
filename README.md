@@ -88,6 +88,10 @@ Each created ticket includes context about where the action item came from. The
 description notes the podcast episode title and includes the generated summary
 so your team has immediate background when reviewing the issue.
 
+Ticket status is fetched directly from JIRA whenever you view the tickets page
+or the list of tickets on an episode's results page, so you can quickly see
+whether items are still open or have been resolved.
+
 The web interface also provides a **Status** page listing all queued and processed episodes from every feed. Use the **Queue** link next to an episode to process it in the background and track its progress on the Status page.
 
 ## Credits

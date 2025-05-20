@@ -10,6 +10,7 @@
         <th>Summary</th>
         <th>Action Item</th>
         <th>Ticket</th>
+        <th>Status</th>
     </tr>
     {% for t in tickets %}
     <tr>
@@ -26,6 +27,7 @@
         <td>{{ t.episode_summary|truncate(200) }}</td>
         <td>{{ t.action_item }}</td>
         <td><a href="{{ t.ticket_url }}" target="_blank">{{ t.ticket_key }}</a></td>
+        <td>{{ t.status }}</td>
     </tr>
     {% endfor %}
 </table>
