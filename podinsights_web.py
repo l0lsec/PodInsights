@@ -268,14 +268,21 @@ def create_jira():
     """Create JIRA tickets for the selected action items."""
     items = request.form.getlist('items')
     episode_url = request.form.get('episode_url')
+    title = request.form.get('title', 'Episode')
     if not items:
         return redirect(request.referrer or url_for('index'))
     episode = get_episode(episode_url) if episode_url else None
     episode_id = episode['id'] if episode else None
+    summary_text = episode['summary'] if episode else ''
     created = []
     for item in items:
         try:
-            issue = create_jira_issue(item, item)
+            description = (
+                f"Action item: {item}\n\n"
+                f"From episode: {title}\n\n"
+                f"Episode summary:\n{summary_text}"
+            )
+            issue = create_jira_issue(item, description)
             key = issue.get('key', '')
             ticket_url = f"{os.environ.get('JIRA_BASE_URL')}/browse/{key}" if key else ''
             if episode_id is not None and key:
