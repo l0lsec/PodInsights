@@ -1,4 +1,8 @@
-"""Simple SQLite helpers for PodInsights."""
+"""Simple SQLite helpers for PodInsights.
+
+This module abstracts the small SQLite database used by both the CLI and the
+web interface. Each function wraps a query so callers don't need to know SQL.
+"""
 
 from __future__ import annotations
 
@@ -9,8 +13,9 @@ DB_PATH = "episodes.db"
 
 
 def init_db(db_path: str = DB_PATH) -> None:
-    """Initialize the database if it does not exist."""
+    """Create tables if the database file is empty."""
     with sqlite3.connect(db_path) as conn:
+        # Table storing RSS feeds that users have added
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS feeds (
@@ -20,6 +25,7 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
+        # Each processed episode is stored here along with its state
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS episodes (
@@ -35,6 +41,7 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
+        # Created JIRA tickets are tracked in a separate table
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS jira_tickets (
@@ -47,7 +54,7 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
-        # Ensure the episodes table has a status column for older DBs
+        # ``status`` was added later, so upgrade any existing DB on startup
         cur = conn.execute("PRAGMA table_info(episodes)")
         columns = [row[1] for row in cur.fetchall()]
         if "status" not in columns:
@@ -57,7 +64,7 @@ def init_db(db_path: str = DB_PATH) -> None:
 
 
 def get_feed(url: str, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
-    """Retrieve a feed by URL."""
+    """Retrieve a feed record by its RSS URL."""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute("SELECT * FROM feeds WHERE url = ?", (url,))
@@ -65,6 +72,7 @@ def get_feed(url: str, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
 
 
 def get_feed_by_id(feed_id: int, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
+    """Return a feed row given its integer ``id``."""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,))
@@ -72,6 +80,7 @@ def get_feed_by_id(feed_id: int, db_path: str = DB_PATH) -> Optional[sqlite3.Row
 
 
 def list_feeds(db_path: str = DB_PATH) -> List[sqlite3.Row]:
+    """Return all stored feeds ordered by title."""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute("SELECT * FROM feeds ORDER BY title")
@@ -79,11 +88,14 @@ def list_feeds(db_path: str = DB_PATH) -> List[sqlite3.Row]:
 
 
 def add_feed(url: str, title: str, db_path: str = DB_PATH) -> int:
-    """Insert or return an existing feed and return its id."""
+    """Insert a new feed if needed and return its ``id``."""
     with sqlite3.connect(db_path) as conn:
+        # ``INSERT OR IGNORE`` lets us call this repeatedly with the same URL
         cur = conn.execute(
-            "INSERT OR IGNORE INTO feeds (url, title) VALUES (?, ?)", (url, title)
+            "INSERT OR IGNORE INTO feeds (url, title) VALUES (?, ?)",
+            (url, title),
         )
+        # ``rowcount`` will be >0 when a new row was inserted
         if cur.rowcount:
             feed_id = cur.lastrowid
         else:
@@ -94,7 +106,7 @@ def add_feed(url: str, title: str, db_path: str = DB_PATH) -> int:
 
 
 def get_episode(url: str, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
-    """Retrieve a processed episode by URL."""
+    """Retrieve a processed episode by its audio URL."""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute("SELECT * FROM episodes WHERE url = ?", (url,))
@@ -110,7 +122,8 @@ def save_episode(
     feed_id: int,
     db_path: str = DB_PATH,
 ) -> None:
-    """Save a processed episode to the DB."""
+    """Persist a fully processed episode."""
+    # Store the list of action items as newline separated text
     actions = "\n".join(action_items)
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -120,13 +133,14 @@ def save_episode(
             VALUES (?, ?, ?, ?, ?, ?, 'complete')
             """,
             (url, title, transcript, summary, actions, feed_id),
-        )
+        )  # episode is complete once saved
         conn.commit()
 
 
 def queue_episode(url: str, title: str, feed_id: int, db_path: str = DB_PATH) -> None:
-    """Queue an episode for processing."""
+    """Mark an episode as awaiting background processing."""
     with sqlite3.connect(db_path) as conn:
+        # Insert only if we haven't seen this URL before
         conn.execute(
             """
             INSERT OR IGNORE INTO episodes (url, title, feed_id, status)
@@ -143,21 +157,23 @@ def update_episode_status(url: str, status: str, db_path: str = DB_PATH) -> None
         conn.execute(
             "UPDATE episodes SET status = ? WHERE url = ?",
             (status, url),
-        )
+        )  # simple status update used by the worker thread
         conn.commit()
 
 
 def list_episodes(feed_id: int, db_path: str = DB_PATH) -> List[sqlite3.Row]:
+    """Return all episodes belonging to a particular feed."""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute(
-            "SELECT * FROM episodes WHERE feed_id = ? ORDER BY id", (feed_id,)
+            "SELECT * FROM episodes WHERE feed_id = ? ORDER BY id",
+            (feed_id,),
         )
         return cur.fetchall()
 
 
 def list_all_episodes(db_path: str = DB_PATH) -> List[sqlite3.Row]:
-    """List episodes from all feeds ordered by id."""
+    """List episodes from all feeds ordered by ``id``."""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute("SELECT * FROM episodes ORDER BY id")
@@ -189,11 +205,13 @@ def list_tickets(
     """List all JIRA tickets or those for a specific episode."""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
+        # Build a query that joins ticket info with episode context
         columns = (
             "jt.*, e.title AS episode_title, e.summary AS episode_summary,"
             " e.url AS episode_url, e.feed_id AS feed_id"
         )
         if episode_id is None:
+            # All tickets across every episode
             cur = conn.execute(
                 f"""
                 SELECT {columns}
@@ -203,6 +221,7 @@ def list_tickets(
                 """
             )
         else:
+            # Only tickets for a specific episode
             cur = conn.execute(
                 f"""
                 SELECT {columns}
