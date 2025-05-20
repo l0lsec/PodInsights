@@ -147,6 +147,45 @@ def get_jira_issue_status(issue_key: str) -> str:
         app.logger.exception("Failed to fetch status for %s", issue_key)
         return ""
 
+
+def get_jira_issue_transitions(issue_key: str) -> list[dict]:
+    """Return available transitions for a JIRA issue."""
+    base = os.environ.get("JIRA_BASE_URL")
+    email = os.environ.get("JIRA_EMAIL")
+    token = os.environ.get("JIRA_API_TOKEN")
+    if not all([base, email, token, issue_key]):
+        return []
+    try:
+        url = f"{base}/rest/api/3/issue/{issue_key}/transitions"
+        resp = requests.get(url, auth=(email, token))
+        resp.raise_for_status()
+        data = resp.json()
+        return [
+            {"id": t.get("id"), "name": t.get("name")}
+            for t in data.get("transitions", [])
+        ]
+    except Exception:  # pragma: no cover - external call
+        app.logger.exception("Failed to fetch transitions for %s", issue_key)
+        return []
+
+
+def transition_jira_issue(issue_key: str, transition_id: str) -> None:
+    """Move a JIRA issue to a new status via transition id."""
+    base = os.environ.get("JIRA_BASE_URL")
+    email = os.environ.get("JIRA_EMAIL")
+    token = os.environ.get("JIRA_API_TOKEN")
+    if not all([base, email, token, issue_key, transition_id]):
+        return
+    try:
+        url = f"{base}/rest/api/3/issue/{issue_key}/transitions"
+        data = {"transition": {"id": transition_id}}
+        resp = requests.post(url, json=data, auth=(email, token))
+        resp.raise_for_status()
+    except Exception:  # pragma: no cover - external call
+        app.logger.exception(
+            "Failed to transition %s using id %s", issue_key, transition_id
+        )
+
 # Templates are stored in the ``templates`` directory
 
 @app.route('/', methods=['GET', 'POST'])
@@ -239,6 +278,7 @@ def process_episode():
         tickets = [dict(t) for t in list_tickets(existing["id"])]
         for t in tickets:
             t["status"] = get_jira_issue_status(t["ticket_key"])
+            t["transitions"] = get_jira_issue_transitions(t["ticket_key"])
         return render_template(
             'result.html',
             title=existing["title"],
@@ -248,6 +288,7 @@ def process_episode():
             feed_id=feed_id,
             url=audio_url,
             tickets=tickets,
+            current_url=request.full_path,
         )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -280,6 +321,7 @@ def process_episode():
         feed_id=feed_id,
         url=audio_url,
         tickets=[],
+        current_url=request.full_path,
     )
 
 
@@ -313,6 +355,17 @@ def create_jira():
     return render_template('jira_result.html', created=created)
 
 
+@app.route('/update_ticket', methods=['POST'])
+def update_ticket():
+    """Update a JIRA ticket's status using a selected transition."""
+    ticket_key = request.form.get('ticket_key')
+    transition_id = request.form.get('transition_id')
+    ref = request.form.get('ref') or url_for('view_tickets')
+    if ticket_key and transition_id:
+        transition_jira_issue(ticket_key, transition_id)
+    return redirect(ref)
+
+
 @app.route('/status')
 def status_page():
     """Display processing status for all episodes."""
@@ -327,6 +380,7 @@ def view_tickets():
     tickets = [dict(t) for t in list_tickets()]
     for t in tickets:
         t["status"] = get_jira_issue_status(t["ticket_key"])
+        t["transitions"] = get_jira_issue_transitions(t["ticket_key"])
     return render_template('tickets.html', tickets=tickets)
 
 if __name__ == '__main__':

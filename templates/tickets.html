@@ -27,7 +27,21 @@
         <td>{{ t.episode_summary|truncate(200) }}</td>
         <td>{{ t.action_item }}</td>
         <td><a href="{{ t.ticket_url }}" target="_blank">{{ t.ticket_key }}</a></td>
-        <td>{{ t.status }}</td>
+        <td>
+            {{ t.status }}
+            {% if t.transitions %}
+            <form method="post" action="{{ url_for('update_ticket') }}" class="d-inline">
+                <input type="hidden" name="ticket_key" value="{{ t.ticket_key }}">
+                <input type="hidden" name="ref" value="{{ request.url }}">
+                <select name="transition_id" class="form-select d-inline w-auto">
+                {% for tr in t.transitions %}
+                    <option value="{{ tr.id }}">{{ tr.name }}</option>
+                {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-sm btn-secondary">Update</button>
+            </form>
+            {% endif %}
+        </td>
     </tr>
     {% endfor %}
 </table>
