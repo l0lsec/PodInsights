@@ -1,3 +1,5 @@
+"""Flask web interface for the PodInsights tool."""
+
 from __future__ import annotations
 import os
 import tempfile
@@ -33,13 +35,14 @@ app = Flask(__name__)
 configure_logging()
 init_db()
 
-# Background processing queue
+# Background processing queue used to process episodes without blocking the web request
 task_queue: Queue = Queue()
 
 
 def worker() -> None:
     """Background thread processing queued episodes."""
     while True:
+        # Wait for an episode to appear in the queue
         item = task_queue.get()
         if item is None:
             break
@@ -69,6 +72,7 @@ def worker() -> None:
 
 
 worker_thread = threading.Thread(target=worker, daemon=True)
+# Start the worker when the application imports
 worker_thread.start()
 
 
@@ -76,6 +80,7 @@ def strip_html(text: str) -> str:
     """Return plain text with HTML tags removed."""
     if not text:
         return ""
+    # replace common HTML tags with line breaks then strip everything else
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
     text = re.sub(r"</p\s*>", "\n", text, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
@@ -87,6 +92,7 @@ def make_short_description(text: str, limit: int = 200) -> str:
     if not text:
         return ""
     text = text.strip()
+    # Use the first couple of sentences as a human friendly snippet
     sentences = re.split(r"(?<=[.!?])\s+", text)
     short = " ".join(sentences[:2])
     if len(short) > limit:
@@ -125,6 +131,7 @@ def create_jira_issue(summary: str, description: str) -> dict:
             "issuetype": {"name": "Task"},
         }
     }
+    # Use basic auth with an API token
     resp = requests.post(url, json=data, auth=(email, token))
     resp.raise_for_status()
     return resp.json()
@@ -138,6 +145,7 @@ def get_jira_issue_status(issue_key: str) -> str:
     if not all([base, email, token, issue_key]):
         return ""
     try:
+        # Fetch the issue data from JIRA
         url = f"{base}/rest/api/3/issue/{issue_key}"
         resp = requests.get(url, auth=(email, token))
         resp.raise_for_status()
@@ -156,6 +164,7 @@ def get_jira_issue_transitions(issue_key: str) -> list[dict]:
     if not all([base, email, token, issue_key]):
         return []
     try:
+        # Fetch transitions that allow moving the issue between states
         url = f"{base}/rest/api/3/issue/{issue_key}/transitions"
         resp = requests.get(url, auth=(email, token))
         resp.raise_for_status()
@@ -177,6 +186,7 @@ def transition_jira_issue(issue_key: str, transition_id: str) -> None:
     if not all([base, email, token, issue_key, transition_id]):
         return
     try:
+        # Perform the transition request
         url = f"{base}/rest/api/3/issue/{issue_key}/transitions"
         data = {"transition": {"id": transition_id}}
         resp = requests.post(url, json=data, auth=(email, token))
@@ -190,8 +200,10 @@ def transition_jira_issue(issue_key: str, transition_id: str) -> None:
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
+    """List stored podcast feeds and allow new ones to be added."""
     feeds = list_feeds()
     if request.method == 'POST':
+        # User submitted a new feed URL
         feed_url = request.form['feed_url']
         feed = feedparser.parse(feed_url)
         title = feed.feed.get('title', feed_url)
@@ -202,12 +214,14 @@ def index():
 
 @app.route('/feed/<int:feed_id>')
 def view_feed(feed_id: int):
+    """Display episodes for a particular feed."""
     feed = get_feed_by_id(feed_id)
     if not feed:
         return redirect(url_for('index'))
     feed_data = feedparser.parse(feed['url'])
     episodes = []
     for entry in feed_data.entries:
+        # Skip items without an audio enclosure
         if not entry.get('enclosures'):
             continue
         url = entry.enclosures[0].href
@@ -218,8 +232,10 @@ def view_feed(feed_id: int):
             'actions': ep_db is not None and bool(ep_db['action_items']),
             'state': ep_db['status'] if ep_db else 'new',
         }
+        # Prefer the summary element but fall back to description
         desc = entry.get('summary') or entry.get('description', '')
         clean_desc = strip_html(desc)
+        # Try a few different locations for artwork
         img = None
         if hasattr(entry, 'image') and getattr(entry.image, 'href', None):
             img = entry.image.href
@@ -255,6 +271,7 @@ def enqueue_episode():
 
 @app.route('/process')
 def process_episode():
+    """Process an episode synchronously and show the results."""
     audio_url = request.args.get('url')
     title = request.args.get('title', 'Episode')
     feed_id = request.args.get('feed_id', type=int)
@@ -271,8 +288,10 @@ def process_episode():
                     desc = entry.get('summary') or entry.get('description', '')
                     description = strip_html(desc)
                     break
+    # Reuse previously processed data if available
     existing = get_episode(audio_url)
     if existing:
+        # Already processed - read results from the DB
         summary = existing["summary"]
         actions = existing["action_items"].splitlines()
         tickets = [dict(t) for t in list_tickets(existing["id"])]
@@ -298,6 +317,7 @@ def process_episode():
             with open(audio_path, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
+        # Run the same processing pipeline as the CLI
         app.logger.info("Transcribing audio")
         transcript = transcribe_audio(audio_path)
         app.logger.info("Transcription complete")
@@ -311,6 +331,7 @@ def process_episode():
         app.logger.info("Action item extraction complete")
         out_path = os.path.join(tmpdir, 'results.json')
         write_results_json(transcript, summary, actions, out_path)
+        # Persist results so they can be reused later
         save_episode(audio_url, title, transcript, summary, actions, feed_id)
     return render_template(
         'result.html',
@@ -328,6 +349,7 @@ def process_episode():
 @app.route('/create_jira', methods=['POST'])
 def create_jira():
     """Create JIRA tickets for the selected action items."""
+    # Items are the action item texts selected by the user
     items = request.form.getlist('items')
     episode_url = request.form.get('episode_url')
     title = request.form.get('title', 'Episode')
@@ -358,6 +380,7 @@ def create_jira():
 @app.route('/update_ticket', methods=['POST'])
 def update_ticket():
     """Update a JIRA ticket's status using a selected transition."""
+    # Ticket key and selected transition id from the form
     ticket_key = request.form.get('ticket_key')
     transition_id = request.form.get('transition_id')
     ref = request.form.get('ref') or url_for('view_tickets')
