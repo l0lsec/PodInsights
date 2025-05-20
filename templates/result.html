@@ -34,7 +34,7 @@
         <h3>JIRA Tickets</h3>
         <ul>
         {% for t in tickets %}
-            <li><a href="{{ t.ticket_url }}" target="_blank">{{ t.ticket_key }}</a> - {{ t.action_item }}</li>
+            <li><a href="{{ t.ticket_url }}" target="_blank">{{ t.ticket_key }}</a> ({{ t.status }}) - {{ t.action_item }}</li>
         {% endfor %}
         </ul>
         {% endif %}

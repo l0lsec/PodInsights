@@ -129,6 +129,24 @@ def create_jira_issue(summary: str, description: str) -> dict:
     resp.raise_for_status()
     return resp.json()
 
+
+def get_jira_issue_status(issue_key: str) -> str:
+    """Return the status name for a JIRA issue."""
+    base = os.environ.get("JIRA_BASE_URL")
+    email = os.environ.get("JIRA_EMAIL")
+    token = os.environ.get("JIRA_API_TOKEN")
+    if not all([base, email, token, issue_key]):
+        return ""
+    try:
+        url = f"{base}/rest/api/3/issue/{issue_key}"
+        resp = requests.get(url, auth=(email, token))
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("fields", {}).get("status", {}).get("name", "")
+    except Exception:  # pragma: no cover - external call
+        app.logger.exception("Failed to fetch status for %s", issue_key)
+        return ""
+
 # Templates are stored in the ``templates`` directory
 
 @app.route('/', methods=['GET', 'POST'])
@@ -218,7 +236,9 @@ def process_episode():
     if existing:
         summary = existing["summary"]
         actions = existing["action_items"].splitlines()
-        tickets = list_tickets(existing["id"])
+        tickets = [dict(t) for t in list_tickets(existing["id"])]
+        for t in tickets:
+            t["status"] = get_jira_issue_status(t["ticket_key"])
         return render_template(
             'result.html',
             title=existing["title"],
@@ -304,7 +324,9 @@ def status_page():
 @app.route('/tickets')
 def view_tickets():
     """Display all created JIRA tickets."""
-    tickets = list_tickets()
+    tickets = [dict(t) for t in list_tickets()]
+    for t in tickets:
+        t["status"] = get_jira_issue_status(t["ticket_key"])
     return render_template('tickets.html', tickets=tickets)
 
 if __name__ == '__main__':
