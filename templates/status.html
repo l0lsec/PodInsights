@@ -3,10 +3,17 @@
 {% block header %}Processing Status{% endblock %}
 {% block content %}
 {% if episodes %}
+<p>
+    Sort by:
+    <a href="{{ url_for('status_page', sort='released') }}">Release date</a> |
+    <a href="{{ url_for('status_page', sort='processed') }}">Processed date</a>
+</p>
 <table class="table table-striped">
     <tr>
         <th>Feed</th>
         <th>Title</th>
+        <th>Released</th>
+        <th>Processed</th>
         <th>Status</th>
         <th>Play</th>
         <th>View</th>
@@ -15,6 +22,8 @@
     <tr>
         <td>{{ feeds.get(ep.feed_id, ep.feed_id) }}</td>
         <td>{{ ep.title }}</td>
+        <td>{{ ep.published or 'N/A' }}</td>
+        <td>{{ ep.processed_at or 'N/A' }}</td>
         <td>{{ ep.status or 'queued' }}</td>
         <td>
             <audio controls preload="none" src="{{ ep.url }}">
@@ -23,7 +32,7 @@
         </td>
         <td>
         {% if ep.status == 'complete' %}
-            <a href="{{ url_for('process_episode', url=ep.url, title=ep.title, feed_id=ep.feed_id) }}">View</a>
+            <a href="{{ url_for('process_episode', url=ep.url, title=ep.title, feed_id=ep.feed_id, published=ep.published) }}">View</a>
         {% endif %}
         </td>
     </tr>

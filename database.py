@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from typing import Iterable, Optional, List
+from datetime import datetime
 
 DB_PATH = "episodes.db"
 
@@ -37,6 +38,8 @@ def init_db(db_path: str = DB_PATH) -> None:
                 summary TEXT,
                 action_items TEXT,
                 status TEXT,
+                published TEXT,
+                processed_at TEXT,
                 FOREIGN KEY(feed_id) REFERENCES feeds(id)
             )
             """
@@ -54,12 +57,16 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
-        # ``status`` was added later, so upgrade any existing DB on startup
+        # Upgrade any existing DB with newer columns
         cur = conn.execute("PRAGMA table_info(episodes)")
         columns = [row[1] for row in cur.fetchall()]
         if "status" not in columns:
             conn.execute("ALTER TABLE episodes ADD COLUMN status TEXT")
             conn.execute("UPDATE episodes SET status = 'complete'")
+        if "published" not in columns:
+            conn.execute("ALTER TABLE episodes ADD COLUMN published TEXT")
+        if "processed_at" not in columns:
+            conn.execute("ALTER TABLE episodes ADD COLUMN processed_at TEXT")
         conn.commit()
 
 
@@ -120,33 +127,41 @@ def save_episode(
     summary: str,
     action_items: Iterable[str],
     feed_id: int,
+    published: str | None = None,
     db_path: str = DB_PATH,
 ) -> None:
     """Persist a fully processed episode."""
     # Store the list of action items as newline separated text
     actions = "\n".join(action_items)
+    processed_at = datetime.utcnow().isoformat(timespec="seconds")
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """
             INSERT OR REPLACE INTO episodes
-                (url, title, transcript, summary, action_items, feed_id, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'complete')
+                (url, title, transcript, summary, action_items, feed_id, status, published, processed_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'complete', ?, ?)
             """,
-            (url, title, transcript, summary, actions, feed_id),
+            (url, title, transcript, summary, actions, feed_id, published, processed_at),
         )  # episode is complete once saved
         conn.commit()
 
 
-def queue_episode(url: str, title: str, feed_id: int, db_path: str = DB_PATH) -> None:
+def queue_episode(
+    url: str,
+    title: str,
+    feed_id: int,
+    published: str | None = None,
+    db_path: str = DB_PATH,
+) -> None:
     """Mark an episode as awaiting background processing."""
     with sqlite3.connect(db_path) as conn:
         # Insert only if we haven't seen this URL before
         conn.execute(
             """
-            INSERT OR IGNORE INTO episodes (url, title, feed_id, status)
-            VALUES (?, ?, ?, 'queued')
+            INSERT OR IGNORE INTO episodes (url, title, feed_id, status, published)
+            VALUES (?, ?, ?, 'queued', ?)
             """,
-            (url, title, feed_id),
+            (url, title, feed_id, published),
         )
         conn.commit()
 
@@ -172,11 +187,14 @@ def list_episodes(feed_id: int, db_path: str = DB_PATH) -> List[sqlite3.Row]:
         return cur.fetchall()
 
 
-def list_all_episodes(db_path: str = DB_PATH) -> List[sqlite3.Row]:
-    """List episodes from all feeds ordered by ``id``."""
+def list_all_episodes(order_by: str = "id", db_path: str = DB_PATH) -> List[sqlite3.Row]:
+    """List episodes from all feeds ordered by the provided column."""
+    valid = {"id", "published", "processed_at"}
+    column = order_by if order_by in valid else "id"
+    direction = "DESC" if column in {"published", "processed_at"} else "ASC"
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        cur = conn.execute("SELECT * FROM episodes ORDER BY id")
+        cur = conn.execute(f"SELECT * FROM episodes ORDER BY {column} {direction}")
         return cur.fetchall()
 
 
@@ -208,7 +226,7 @@ def list_tickets(
         # Build a query that joins ticket info with episode context
         columns = (
             "jt.*, e.title AS episode_title, e.summary AS episode_summary,"
-            " e.url AS episode_url, e.feed_id AS feed_id"
+            " e.url AS episode_url, e.feed_id AS feed_id, e.published AS published"
         )
         if episode_id is None:
             # All tickets across every episode
