@@ -15,7 +15,7 @@
     {% for t in tickets %}
     <tr>
         <td>
-            <a href="{{ url_for('process_episode', url=t.episode_url, title=t.episode_title, feed_id=t.feed_id) }}">
+            <a href="{{ url_for('process_episode', url=t.episode_url, title=t.episode_title, feed_id=t.feed_id, published=t.published) }}">
                 {{ t.episode_title }}
             </a>
         </td>

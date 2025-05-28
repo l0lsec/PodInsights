@@ -9,6 +9,8 @@ from flask import Flask, request, render_template, redirect, url_for
 import re
 import feedparser
 import requests
+from datetime import datetime
+import time
 from html import unescape
 from database import (
     init_db,
@@ -49,6 +51,7 @@ def worker() -> None:
         url = item["url"]
         title = item.get("title", "Episode")
         feed_id = item.get("feed_id")
+        published = item.get("published")
         try:
             update_episode_status(url, "processing")
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -63,7 +66,7 @@ def worker() -> None:
                 actions = extract_action_items(transcript)
                 out_path = os.path.join(tmpdir, "results.json")
                 write_results_json(transcript, summary, actions, out_path)
-                save_episode(url, title, transcript, summary, actions, feed_id)
+                save_episode(url, title, transcript, summary, actions, feed_id, published)
         except Exception:
             app.logger.exception("Failed to process episode %s", url)
             update_episode_status(url, "error")
@@ -245,6 +248,12 @@ def view_feed(feed_id: int):
             img = entry.media_thumbnail[0].get('url')
         elif entry.get('media_content'):
             img = entry.media_content[0].get('url')
+        published_ts = None
+        if getattr(entry, 'published_parsed', None):
+            published_ts = datetime.fromtimestamp(time.mktime(entry.published_parsed))
+        elif getattr(entry, 'updated_parsed', None):
+            published_ts = datetime.fromtimestamp(time.mktime(entry.updated_parsed))
+        published_iso = published_ts.isoformat() if published_ts else None
         episodes.append({
             'title': entry.title,
             'description': desc,
@@ -253,6 +262,7 @@ def view_feed(feed_id: int):
             'image': img,
             'enclosure': url,
             'status': status,
+            'published': published_iso,
         })
     return render_template('feed.html', feed=feed, episodes=episodes)
 
@@ -263,10 +273,11 @@ def enqueue_episode():
     audio_url = request.args.get('url')
     title = request.args.get('title', 'Episode')
     feed_id = request.args.get('feed_id', type=int)
+    published = request.args.get('published')
     if not audio_url or feed_id is None:
         return redirect(url_for('index'))
-    queue_episode(audio_url, title, feed_id)
-    task_queue.put({'url': audio_url, 'title': title, 'feed_id': feed_id})
+    queue_episode(audio_url, title, feed_id, published)
+    task_queue.put({'url': audio_url, 'title': title, 'feed_id': feed_id, 'published': published})
     return redirect(url_for('status_page'))
 
 @app.route('/process')
@@ -275,6 +286,7 @@ def process_episode():
     audio_url = request.args.get('url')
     title = request.args.get('title', 'Episode')
     feed_id = request.args.get('feed_id', type=int)
+    published = request.args.get('published')
     description = strip_html(request.args.get('description', ''))
     if not audio_url:
         return redirect(url_for('index'))
@@ -332,7 +344,7 @@ def process_episode():
         out_path = os.path.join(tmpdir, 'results.json')
         write_results_json(transcript, summary, actions, out_path)
         # Persist results so they can be reused later
-        save_episode(audio_url, title, transcript, summary, actions, feed_id)
+        save_episode(audio_url, title, transcript, summary, actions, feed_id, published)
     return render_template(
         'result.html',
         title=title,
@@ -392,9 +404,16 @@ def update_ticket():
 @app.route('/status')
 def status_page():
     """Display processing status for all episodes."""
-    episodes = list_all_episodes()
+    sort = request.args.get('sort')
+    if sort == 'released':
+        order_by = 'published'
+    elif sort == 'processed':
+        order_by = 'processed_at'
+    else:
+        order_by = 'id'
+    episodes = list_all_episodes(order_by=order_by)
     feeds = {f["id"]: f["title"] for f in list_feeds()}
-    return render_template('status.html', episodes=episodes, feeds=feeds)
+    return render_template('status.html', episodes=episodes, feeds=feeds, sort=sort)
 
 
 @app.route('/tickets')
