@@ -30,6 +30,29 @@ PodInsights is a simple command-line tool that helps you transcribe podcast audi
 - Optional for the web interface: [`Flask`](https://palletsprojects.com/p/flask/), [`feedparser`](https://pypi.org/project/feedparser/), and [`requests`](https://pypi.org/project/requests/)
   (`sqlite3` from the standard library is used for episode tracking)
 
+## Environment Variables
+
+The following environment variables control authentication, model selection, and integration features:
+
+### Required for All Modes
+
+- **`OPENAI_API_KEY`** *(required)*: Your OpenAI API key. Required for all summarization and action item extraction features.
+
+### Optional (Advanced Usage)
+
+- **`OPENAI_MODEL`**: The OpenAI model to use for summarization and action item extraction (default: `gpt-4.1-nano`). Set this if you want to use a different model.
+
+### Required for JIRA Integration (Web UI)
+
+- **`JIRA_BASE_URL`**: The base URL of your JIRA Cloud instance (e.g., `https://example.atlassian.net`).
+- **`JIRA_EMAIL`**: The email address associated with your JIRA API token.
+- **`JIRA_API_TOKEN`**: Your JIRA API token.
+- **`JIRA_PROJECT_KEY`**: The project key where new issues should be created.
+
+### Optional for Web UI
+
+- **`PORT`**: The port for the Flask web server (default: `5001`). Set this if you want the web UI to run on a different port.
+
 ## Usage (CLI)
 
 ```bash
