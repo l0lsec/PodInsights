@@ -119,7 +119,7 @@ The web interface also provides a **Status** page listing all queued and process
 
 ## Credits
 
-Developed by Sedric "Show Up Show Out" Louissaint from Show Up Show Out Security. 
+Developed by Sedric "ShowUpShowOut" Louissaint from Show Up Show Out Security. 
 
 Learn more about Show Up Show Out Security at [susos.co](https://susos.co).
 
