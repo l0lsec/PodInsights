@@ -287,7 +287,7 @@ def process_episode():
     title = request.args.get('title', 'Episode')
     feed_id = request.args.get('feed_id', type=int)
     published = request.args.get('published')
-    description = strip_html(request.args.get('description', ''))
+    description = ""
     if not audio_url:
         return redirect(url_for('index'))
     app.logger.info("Processing episode: %s", audio_url)
@@ -304,6 +304,7 @@ def process_episode():
     existing = get_episode(audio_url)
     if existing:
         # Already processed - read results from the DB
+        transcript = existing["transcript"]
         summary = existing["summary"]
         actions = existing["action_items"].splitlines()
         tickets = [dict(t) for t in list_tickets(existing["id"])]
@@ -313,6 +314,7 @@ def process_episode():
         return render_template(
             'result.html',
             title=existing["title"],
+            transcript=transcript,
             summary=summary,
             actions=actions,
             description=description,
@@ -348,6 +350,7 @@ def process_episode():
     return render_template(
         'result.html',
         title=title,
+        transcript=transcript,
         summary=summary,
         actions=actions,
         description=description,
