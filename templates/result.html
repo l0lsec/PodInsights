@@ -54,6 +54,13 @@
         </ul>
         {% endif %}
     </div>
+    <div class="col-12">
+        <h2>Transcript</h2>
+        <details>
+            <summary class="mb-2">Show transcript</summary>
+            <pre class="bg-light p-3 rounded">{{ transcript }}</pre>
+        </details>
+    </div>
 </div>
 {% if feed_id %}
 <p><a class="btn btn-secondary" href="{{ url_for('view_feed', feed_id=feed_id) }}">Back to feed</a></p>

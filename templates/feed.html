@@ -38,7 +38,7 @@
         <td>{{ ep.status.state }}</td>
         <td>
             <a
-                href="{{ url_for('process_episode', url=ep.enclosure, title=ep.title, feed_id=feed.id, description=ep.clean_description, published=ep.published) }}"
+                href="{{ url_for('process_episode', url=ep.enclosure, title=ep.title, feed_id=feed.id, published=ep.published) }}"
                 data-processing="true"
             >Process</a>
         </td>
