@@ -46,6 +46,29 @@
             white-space: normal;
             max-width: 400px;
         }
+        /* Markdown content styling */
+        .summary-content h1, .summary-content h2, .summary-content h3 {
+            font-size: 1.1rem;
+            font-weight: bold;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        .summary-content p {
+            margin-bottom: 0.75rem;
+        }
+        .summary-content ul, .summary-content ol {
+            margin-bottom: 0.75rem;
+            padding-left: 1.5rem;
+        }
+        .summary-content strong {
+            font-weight: 600;
+        }
+        .summary-content code {
+            background: #e9ecef;
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
     </style>
 </head>
 <body>
@@ -68,12 +91,25 @@
         <h1 class="mb-4">{% block header %}PodInsights{% endblock %}</h1>
         {% block content %}{% endblock %}
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
     document.addEventListener('DOMContentLoaded', function () {
-        document.querySelectorAll('[data-processing]').forEach(function (el) {
-            el.addEventListener('click', function () {
+        // Show loading overlay on form submit (not click)
+        document.querySelectorAll('form[data-processing]').forEach(function (form) {
+            form.addEventListener('submit', function () {
                 document.getElementById('loadingOverlay').classList.remove('d-none');
             });
+        });
+        // Show loading overlay on link click
+        document.querySelectorAll('a[data-processing]').forEach(function (link) {
+            link.addEventListener('click', function () {
+                document.getElementById('loadingOverlay').classList.remove('d-none');
+            });
+        });
+        // Render markdown in elements with data-markdown attribute
+        document.querySelectorAll('[data-markdown]').forEach(function (el) {
+            var raw = el.textContent;
+            el.innerHTML = marked.parse(raw);
         });
     });
     </script>

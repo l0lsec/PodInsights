@@ -5,5 +5,12 @@ requests>=2.31.0
 openai>=1.0.0
 python-dotenv>=1.0.0
 
-# Audio transcription (install separately if needed - may have platform-specific issues)
+# Audio transcription - install ONE of these based on your system:
+# Apple Silicon Mac (M1/M2/M3/M4) - recommended, free & fast:
+mlx-whisper>=0.4.0
+
+# Other systems (Linux/Windows/Intel Mac) - may have issues on Python 3.13+:
 # pip install faster-whisper
+
+# Or use OpenAI API (costs $0.006/min but always works):
+# Just set OPENAI_API_KEY in your .env file

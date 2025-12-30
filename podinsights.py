@@ -19,7 +19,7 @@ def configure_logging(verbose: bool = False) -> None:
 
 
 def transcribe_audio(audio_path: str) -> str:
-    """Transcribe an audio file using the ``faster-whisper`` library.
+    """Transcribe an audio file using local mlx-whisper, faster-whisper, or OpenAI API.
 
     Parameters
     ----------
@@ -32,27 +32,62 @@ def transcribe_audio(audio_path: str) -> str:
         The transcribed text.
     """
     logger.debug("Starting transcription of %s", audio_path)
-    # Import here so the CLI works even if the optional dependency isn't installed
+    
+    # Try mlx-whisper first (optimized for Apple Silicon, free & local)
+    try:
+        import mlx_whisper
+        logger.info("Using mlx-whisper for transcription (Apple Silicon optimized)")
+        result = mlx_whisper.transcribe(
+            audio_path,
+            path_or_hf_repo="mlx-community/whisper-base-mlx",
+        )
+        transcript = result.get("text", "").strip()
+        logger.debug("Transcription complete via mlx-whisper")
+        return transcript
+    except ImportError:
+        logger.debug("mlx-whisper not available, trying alternatives")
+    except Exception as exc:
+        logger.warning("mlx-whisper failed: %s, trying alternatives", exc)
+    
+    # Try faster-whisper next (works on Linux/Windows/older Macs)
     try:
         from faster_whisper import WhisperModel
-    except ImportError as exc:  # pragma: no cover - optional dependency
-        logger.exception("faster-whisper not installed")
-        raise NotImplementedError(
-            "Audio transcription requires the `faster-whisper` package."
-        ) from exc
-
-    try:
-        # ``WhisperModel.transcribe`` yields segments so we materialise the
-        # generator to count them and join into one string.
+        logger.info("Using faster-whisper for transcription")
         model = WhisperModel("base", device="cpu")
         segments, _ = model.transcribe(audio_path)
         segments_list = list(segments)
         transcript = " ".join(segment.text.strip() for segment in segments_list)
         logger.debug("Transcription finished with %d segments", len(segments_list))
         return transcript
+    except ImportError:
+        logger.debug("faster-whisper not available, trying OpenAI API")
     except Exception as exc:
-        logger.exception("Transcription failed")
-        raise RuntimeError("Failed to transcribe audio") from exc
+        logger.warning("faster-whisper failed: %s, trying OpenAI API", exc)
+    
+    # Fall back to OpenAI Whisper API (costs money but always works)
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            
+            logger.info("Using OpenAI Whisper API for transcription")
+            with open(audio_path, "rb") as audio_file:
+                response = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                )
+            transcript = response.text.strip()
+            logger.debug("Transcription complete via OpenAI API")
+            return transcript
+        except Exception as exc:
+            logger.exception("OpenAI Whisper API failed: %s", exc)
+    
+    raise NotImplementedError(
+        "Audio transcription requires one of:\n"
+        "1. mlx-whisper (pip install mlx-whisper) - Best for Apple Silicon Macs\n"
+        "2. faster-whisper (pip install faster-whisper) - For other systems\n"
+        "3. OPENAI_API_KEY environment variable set (uses paid API)"
+    )
 
 
 def summarize_text(text: str) -> str:
