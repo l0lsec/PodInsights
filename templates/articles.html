@@ -4,6 +4,63 @@
 {% block content %}
 <p class="lead text-muted mb-4">Articles generated from podcast transcriptions on tech, privacy, and cybersecurity topics.</p>
 
+<!-- Filter Bar -->
+<div class="filter-bar">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">Search</label>
+            <input type="text" class="form-control" name="q" value="{{ search_query }}" placeholder="Search topics, episodes...">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Style</label>
+            <select name="style" class="form-select">
+                <option value="">All Styles</option>
+                {% for s in all_styles %}
+                <option value="{{ s }}" {% if filter_style == s %}selected{% endif %}>{{ s|capitalize }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Source</label>
+            <select name="podcast" class="form-select">
+                <option value="">All Sources</option>
+                {% for p in all_podcasts %}
+                <option value="{{ p }}" {% if filter_podcast == p %}selected{% endif %}>{{ p[:25] }}{% if p|length > 25 %}...{% endif %}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Sort By</label>
+            <select name="sort" class="form-select">
+                <option value="date" {% if sort_by == 'date' %}selected{% endif %}>Date Created</option>
+                <option value="topic" {% if sort_by == 'topic' %}selected{% endif %}>Topic</option>
+                <option value="style" {% if sort_by == 'style' %}selected{% endif %}>Style</option>
+                <option value="podcast" {% if sort_by == 'podcast' %}selected{% endif %}>Source</option>
+            </select>
+        </div>
+        <div class="col-md-1">
+            <label class="form-label">Order</label>
+            <select name="order" class="form-select">
+                <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>↓</option>
+                <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>↑</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-secondary w-100">Apply</button>
+        </div>
+    </form>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <span class="results-count">
+        Showing <strong>{{ articles|length }}</strong> article{% if articles|length != 1 %}s{% endif %}
+        {% if filter_style or filter_podcast or search_query %}
+        (filtered)
+        <a href="{{ url_for('view_articles') }}" class="ms-2 text-decoration-none">Clear filters</a>
+        {% endif %}
+    </span>
+</div>
+
 {% if articles %}
 <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
     {% for article in articles %}
@@ -23,7 +80,7 @@
                 </p>
             </div>
             <div class="card-footer bg-transparent d-flex justify-content-between align-items-center">
-                <small class="text-muted">{{ article.created_at }}</small>
+                <small class="text-muted">{{ article.created_at[:10] if article.created_at else '' }}</small>
                 <a href="{{ url_for('view_article', article_id=article.id) }}" class="btn btn-sm btn-outline-primary">Read Article</a>
             </div>
         </div>
@@ -33,10 +90,13 @@
 {% else %}
 <div class="text-center py-5">
     <div class="display-1 mb-3">✍️</div>
-    <h3>No Articles Yet</h3>
+    <h3>No Articles Found</h3>
+    {% if filter_style or filter_podcast or search_query %}
+    <p class="text-muted">No articles match your current filters.</p>
+    {% else %}
     <p class="text-muted">Generate your first article by processing a podcast episode and using the article generator.</p>
     <a href="{{ url_for('index') }}" class="btn btn-primary">Browse Feeds</a>
+    {% endif %}
 </div>
 {% endif %}
 {% endblock %}
-

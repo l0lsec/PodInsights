@@ -22,10 +22,25 @@ def init_db(db_path: str = DB_PATH) -> None:
             CREATE TABLE IF NOT EXISTS feeds (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url TEXT UNIQUE,
-                title TEXT
+                title TEXT,
+                feed_type TEXT,
+                last_post TEXT,
+                item_count INTEGER,
+                last_checked TEXT
             )
             """
         )
+        # Upgrade existing feeds table with new columns
+        cur = conn.execute("PRAGMA table_info(feeds)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "feed_type" not in columns:
+            conn.execute("ALTER TABLE feeds ADD COLUMN feed_type TEXT")
+        if "last_post" not in columns:
+            conn.execute("ALTER TABLE feeds ADD COLUMN last_post TEXT")
+        if "item_count" not in columns:
+            conn.execute("ALTER TABLE feeds ADD COLUMN item_count INTEGER")
+        if "last_checked" not in columns:
+            conn.execute("ALTER TABLE feeds ADD COLUMN last_checked TEXT")
         # Each processed episode is stored here along with its state
         conn.execute(
             """
@@ -152,6 +167,28 @@ def add_feed(url: str, title: str, db_path: str = DB_PATH) -> int:
             feed_id = cur.fetchone()[0]
         conn.commit()
         return feed_id
+
+
+def update_feed_metadata(
+    feed_id: int,
+    feed_type: str,
+    last_post: str | None,
+    item_count: int,
+    db_path: str = DB_PATH,
+) -> None:
+    """Update cached metadata for a feed."""
+    from datetime import datetime
+    last_checked = datetime.utcnow().isoformat(timespec="seconds")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE feeds 
+            SET feed_type = ?, last_post = ?, item_count = ?, last_checked = ?
+            WHERE id = ?
+            """,
+            (feed_type, last_post, item_count, last_checked, feed_id),
+        )
+        conn.commit()
 
 
 def get_episode(url: str, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:

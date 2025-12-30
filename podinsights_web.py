@@ -31,6 +31,7 @@ from database import (
     add_article,
     get_article,
     list_articles,
+    update_feed_metadata,
 )
 from podinsights import (
     transcribe_audio,
@@ -209,18 +210,129 @@ def transition_jira_issue(issue_key: str, transition_id: str) -> None:
 
 # Templates are stored in the ``templates`` directory
 
+def refresh_feed_metadata(feed_id: int, feed_url: str) -> dict:
+    """Fetch feed and update cached metadata. Returns the metadata dict."""
+    try:
+        feed_data = feedparser.parse(feed_url)
+        if not feed_data.entries:
+            return {'type': 'unknown', 'last_post': None, 'item_count': 0}
+        
+        # Determine feed type from first entry with content
+        is_audio = False
+        for entry in feed_data.entries[:5]:  # Check first 5 entries
+            if entry.get('enclosures'):
+                is_audio = True
+                break
+        
+        feed_type = 'audio' if is_audio else 'text'
+        
+        # Get last post date from most recent entry
+        last_post = None
+        last_post_str = None
+        for entry in feed_data.entries[:1]:
+            if getattr(entry, 'published_parsed', None):
+                last_post = datetime.fromtimestamp(time.mktime(entry.published_parsed))
+                last_post_str = last_post.isoformat()
+            elif getattr(entry, 'updated_parsed', None):
+                last_post = datetime.fromtimestamp(time.mktime(entry.updated_parsed))
+                last_post_str = last_post.isoformat()
+        
+        item_count = len(feed_data.entries)
+        
+        # Save to database
+        update_feed_metadata(feed_id, feed_type, last_post_str, item_count)
+        
+        return {
+            'type': feed_type,
+            'last_post': last_post,
+            'item_count': item_count
+        }
+    except Exception:
+        return {'type': 'unknown', 'last_post': None, 'item_count': 0}
+
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
     """List stored podcast feeds and allow new ones to be added."""
-    feeds = list_feeds()
     if request.method == 'POST':
         # User submitted a new feed URL
         feed_url = request.form['feed_url']
         feed = feedparser.parse(feed_url)
         title = feed.feed.get('title', feed_url)
         feed_id = add_feed(feed_url, title)
+        # Refresh metadata for the new feed
+        refresh_feed_metadata(feed_id, feed_url)
         return redirect(url_for('view_feed', feed_id=feed_id))
-    return render_template('feeds.html', feeds=feeds)
+    
+    # Get filter and sort parameters
+    filter_type = request.args.get('type', '')
+    sort_by = request.args.get('sort', 'title')
+    sort_order = request.args.get('order', 'asc')
+    search_query = request.args.get('q', '').lower()
+    
+    raw_feeds = list_feeds()
+    feeds_with_meta = []
+    
+    for f in raw_feeds:
+        # Use cached metadata from database
+        last_post = None
+        if f['last_post']:
+            try:
+                last_post = datetime.fromisoformat(f['last_post'])
+            except (ValueError, TypeError):
+                pass
+        
+        feed_dict = {
+            'id': f['id'],
+            'title': f['title'],
+            'url': f['url'],
+            'type': f['feed_type'] or 'unknown',
+            'last_post': last_post,
+            'item_count': f['item_count'] or 0,
+            'last_checked': f['last_checked'],
+        }
+        
+        # Apply type filter
+        if filter_type and feed_dict['type'] != filter_type:
+            continue
+        
+        # Apply search filter
+        if search_query and search_query not in feed_dict['title'].lower():
+            continue
+        
+        feeds_with_meta.append(feed_dict)
+    
+    # Sort feeds
+    if sort_by == 'last_post':
+        feeds_with_meta.sort(
+            key=lambda x: x['last_post'] or datetime.min,
+            reverse=(sort_order == 'desc')
+        )
+    elif sort_by == 'type':
+        feeds_with_meta.sort(
+            key=lambda x: x['type'] or '',
+            reverse=(sort_order == 'desc')
+        )
+    elif sort_by == 'items':
+        feeds_with_meta.sort(
+            key=lambda x: x['item_count'] or 0,
+            reverse=(sort_order == 'desc')
+        )
+    else:  # Default: title
+        feeds_with_meta.sort(
+            key=lambda x: x['title'].lower(),
+            reverse=(sort_order == 'desc')
+        )
+    
+    return render_template(
+        'feeds.html',
+        feeds=feeds_with_meta,
+        filter_type=filter_type,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        search_query=search_query,
+        now=datetime.now(),
+    )
 
 
 @app.route('/feed/<int:feed_id>/delete', methods=['POST'])
@@ -230,12 +342,39 @@ def remove_feed(feed_id: int):
     return redirect(url_for('index'))
 
 
+@app.route('/feed/<int:feed_id>/refresh')
+def refresh_feed(feed_id: int):
+    """Refresh metadata for a specific feed."""
+    feed = get_feed_by_id(feed_id)
+    if feed:
+        refresh_feed_metadata(feed_id, feed['url'])
+    return redirect(url_for('index'))
+
+
+@app.route('/feeds/refresh-all')
+def refresh_all_feeds():
+    """Refresh metadata for all feeds (runs in background thread)."""
+    def refresh_worker():
+        for f in list_feeds():
+            try:
+                refresh_feed_metadata(f['id'], f['url'])
+            except Exception:
+                pass
+    
+    thread = threading.Thread(target=refresh_worker, daemon=True)
+    thread.start()
+    return redirect(url_for('index'))
+
+
 @app.route('/feed/<int:feed_id>')
 def view_feed(feed_id: int):
     """Display episodes/articles for a particular feed with pagination."""
     feed = get_feed_by_id(feed_id)
     if not feed:
         return redirect(url_for('index'))
+    
+    # Refresh metadata when viewing a feed (it's just one feed, so it's fast)
+    refresh_feed_metadata(feed_id, feed['url'])
     
     # Pagination parameters
     page = request.args.get('page', 1, type=int)
@@ -568,16 +707,63 @@ def update_ticket():
 @app.route('/status')
 def status_page():
     """Display processing status for all episodes."""
-    sort = request.args.get('sort')
+    sort = request.args.get('sort', 'released')
+    sort_order = request.args.get('order', 'desc')
+    filter_status = request.args.get('status', '')
+    filter_feed = request.args.get('feed', '', type=str)
+    filter_type = request.args.get('type', '')
+    search_query = request.args.get('q', '').lower()
+    
     if sort == 'released':
         order_by = 'published'
     elif sort == 'processed':
         order_by = 'processed_at'
     else:
         order_by = 'id'
-    episodes = list_all_episodes(order_by=order_by)
-    feeds = {f["id"]: f["title"] for f in list_feeds()}
-    return render_template('status.html', episodes=episodes, feeds=feeds, sort=sort)
+    
+    all_episodes = list_all_episodes(order_by=order_by)
+    feeds_list = list_feeds()
+    feeds = {f["id"]: f["title"] for f in feeds_list}
+    
+    # Filter episodes
+    filtered_episodes = []
+    for ep in all_episodes:
+        # Status filter
+        if filter_status and ep['status'] != filter_status:
+            continue
+        
+        # Feed filter
+        if filter_feed and str(ep['feed_id']) != filter_feed:
+            continue
+        
+        # Type filter (audio vs text)
+        is_audio = ep['url'].lower().split('?')[0].endswith(('.mp3', '.m4a', '.wav', '.ogg', '.aac', '.flac'))
+        ep_type = 'audio' if is_audio else 'text'
+        if filter_type and ep_type != filter_type:
+            continue
+        
+        # Search filter
+        if search_query and search_query not in (ep['title'] or '').lower():
+            continue
+        
+        filtered_episodes.append(ep)
+    
+    # Reverse order if ascending
+    if sort_order == 'asc':
+        filtered_episodes = list(reversed(filtered_episodes))
+    
+    return render_template(
+        'status.html',
+        episodes=filtered_episodes,
+        feeds=feeds,
+        feeds_list=feeds_list,
+        sort=sort,
+        sort_order=sort_order,
+        filter_status=filter_status,
+        filter_feed=filter_feed,
+        filter_type=filter_type,
+        search_query=search_query,
+    )
 
 
 @app.route('/episode/<int:episode_id>/reprocess')
@@ -624,11 +810,53 @@ def delete_episode(episode_id: int):
 @app.route('/tickets')
 def view_tickets():
     """Display all created JIRA tickets."""
-    tickets = [dict(t) for t in list_tickets()]
-    for t in tickets:
+    sort_by = request.args.get('sort', 'id')
+    sort_order = request.args.get('order', 'desc')
+    filter_status = request.args.get('status', '')
+    search_query = request.args.get('q', '').lower()
+    
+    raw_tickets = [dict(t) for t in list_tickets()]
+    
+    # Fetch JIRA statuses and filter
+    tickets = []
+    all_statuses = set()
+    
+    for t in raw_tickets:
         t["status"] = get_jira_issue_status(t["ticket_key"])
         t["transitions"] = get_jira_issue_transitions(t["ticket_key"])
-    return render_template('tickets.html', tickets=tickets)
+        all_statuses.add(t["status"] or "Unknown")
+        
+        # Filter by status
+        if filter_status and t["status"] != filter_status:
+            continue
+        
+        # Search filter
+        if search_query:
+            searchable = f"{t['episode_title']} {t['action_item']} {t['ticket_key']}".lower()
+            if search_query not in searchable:
+                continue
+        
+        tickets.append(t)
+    
+    # Sort tickets
+    if sort_by == 'episode':
+        tickets.sort(key=lambda x: (x['episode_title'] or '').lower(), reverse=(sort_order == 'desc'))
+    elif sort_by == 'status':
+        tickets.sort(key=lambda x: (x['status'] or '').lower(), reverse=(sort_order == 'desc'))
+    elif sort_by == 'ticket':
+        tickets.sort(key=lambda x: x['ticket_key'], reverse=(sort_order == 'desc'))
+    else:
+        tickets.sort(key=lambda x: x['id'], reverse=(sort_order == 'desc'))
+    
+    return render_template(
+        'tickets.html',
+        tickets=tickets,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        filter_status=filter_status,
+        search_query=search_query,
+        all_statuses=sorted(all_statuses),
+    )
 
 
 @app.route('/generate_article', methods=['POST'])
@@ -697,8 +925,61 @@ def view_article(article_id: int):
 @app.route('/articles')
 def view_articles():
     """Display all generated articles."""
-    articles = [dict(a) for a in list_articles()]
-    return render_template('articles.html', articles=articles)
+    sort_by = request.args.get('sort', 'date')
+    sort_order = request.args.get('order', 'desc')
+    filter_style = request.args.get('style', '')
+    filter_podcast = request.args.get('podcast', '')
+    search_query = request.args.get('q', '').lower()
+    
+    raw_articles = [dict(a) for a in list_articles()]
+    
+    # Collect unique styles and podcasts for filter dropdowns
+    all_styles = set()
+    all_podcasts = set()
+    
+    articles = []
+    for a in raw_articles:
+        all_styles.add(a['style'])
+        if a.get('podcast_title'):
+            all_podcasts.add(a['podcast_title'])
+        
+        # Filter by style
+        if filter_style and a['style'] != filter_style:
+            continue
+        
+        # Filter by podcast
+        if filter_podcast and a.get('podcast_title') != filter_podcast:
+            continue
+        
+        # Search filter
+        if search_query:
+            searchable = f"{a['topic']} {a.get('episode_title', '')} {a.get('podcast_title', '')}".lower()
+            if search_query not in searchable:
+                continue
+        
+        articles.append(a)
+    
+    # Sort articles
+    if sort_by == 'topic':
+        articles.sort(key=lambda x: x['topic'].lower(), reverse=(sort_order == 'desc'))
+    elif sort_by == 'style':
+        articles.sort(key=lambda x: x['style'].lower(), reverse=(sort_order == 'desc'))
+    elif sort_by == 'podcast':
+        articles.sort(key=lambda x: (x.get('podcast_title') or '').lower(), reverse=(sort_order == 'desc'))
+    else:  # Default: date
+        articles.sort(key=lambda x: x['created_at'] or '', reverse=(sort_order == 'desc'))
+    
+    return render_template(
+        'articles.html',
+        articles=articles,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        filter_style=filter_style,
+        filter_podcast=filter_podcast,
+        search_query=search_query,
+        all_styles=sorted(all_styles),
+        all_podcasts=sorted(all_podcasts),
+    )
 
 
 if __name__ == '__main__':

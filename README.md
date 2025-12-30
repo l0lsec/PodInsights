@@ -243,4 +243,8 @@ Developed by Sedric "ShowUpShowOut" Louissaint from Show Up Show Out Security.
 
 Learn more about Show Up Show Out Security at [susos.co](https://susos.co).
 
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
 ---

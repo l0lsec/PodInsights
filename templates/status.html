@@ -2,83 +2,167 @@
 {% block title %}Processing Status{% endblock %}
 {% block header %}Processing Status{% endblock %}
 {% block content %}
+<!-- Filter Bar -->
+<div class="filter-bar">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">Search</label>
+            <input type="text" class="form-control" name="q" value="{{ search_query }}" placeholder="Search episodes...">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-select">
+                <option value="">All Statuses</option>
+                <option value="complete" {% if filter_status == 'complete' %}selected{% endif %}>✅ Complete</option>
+                <option value="processing" {% if filter_status == 'processing' %}selected{% endif %}>⏳ Processing</option>
+                <option value="queued" {% if filter_status == 'queued' %}selected{% endif %}>📋 Queued</option>
+                <option value="error" {% if filter_status == 'error' %}selected{% endif %}>❌ Error</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Feed</label>
+            <select name="feed" class="form-select">
+                <option value="">All Feeds</option>
+                {% for f in feeds_list %}
+                <option value="{{ f.id }}" {% if filter_feed == f.id|string %}selected{% endif %}>{{ f.title[:30] }}{% if f.title|length > 30 %}...{% endif %}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-1">
+            <label class="form-label">Type</label>
+            <select name="type" class="form-select">
+                <option value="">All</option>
+                <option value="audio" {% if filter_type == 'audio' %}selected{% endif %}>🎙️</option>
+                <option value="text" {% if filter_type == 'text' %}selected{% endif %}>📄</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Sort By</label>
+            <select name="sort" class="form-select">
+                <option value="released" {% if sort == 'released' %}selected{% endif %}>Release Date</option>
+                <option value="processed" {% if sort == 'processed' %}selected{% endif %}>Processed Date</option>
+            </select>
+        </div>
+        <div class="col-md-1">
+            <label class="form-label">Order</label>
+            <select name="order" class="form-select">
+                <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>↓</option>
+                <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>↑</option>
+            </select>
+        </div>
+        <div class="col-md-1">
+            <button type="submit" class="btn btn-secondary w-100">Go</button>
+        </div>
+    </form>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <span class="results-count">
+        Showing <strong>{{ episodes|length }}</strong> episode{% if episodes|length != 1 %}s{% endif %}
+        {% if filter_status or filter_feed or filter_type or search_query %}
+        (filtered)
+        <a href="{{ url_for('status_page') }}" class="ms-2 text-decoration-none">Clear filters</a>
+        {% endif %}
+    </span>
+</div>
+
 {% if episodes %}
-<p>
-    Sort by:
-    <a href="{{ url_for('status_page', sort='released') }}" class="{% if sort == 'released' %}fw-bold{% endif %}">Release date</a> |
-    <a href="{{ url_for('status_page', sort='processed') }}" class="{% if sort == 'processed' %}fw-bold{% endif %}">Processed date</a>
-</p>
-<table class="table table-striped">
-    <tr>
-        <th>Feed</th>
-        <th>Title</th>
-        <th>Released</th>
-        <th>Processed</th>
-        <th>Status</th>
-        <th>Preview</th>
-        <th>Actions</th>
-    </tr>
-    {% for ep in episodes %}
-    <tr>
-        <td>{{ feeds.get(ep.feed_id, ep.feed_id) }}</td>
-        <td>{{ ep.title }}</td>
-        <td class="text-nowrap">{{ ep.published[:10] if ep.published else 'N/A' }}</td>
-        <td class="text-nowrap">{{ ep.processed_at[:10] if ep.processed_at else 'N/A' }}</td>
-        <td>
-            {% if ep.status == 'complete' %}
-            <span class="badge bg-success">Complete</span>
-            {% elif ep.status == 'processing' %}
-            <span class="badge bg-warning text-dark">Processing</span>
-            {% elif ep.status == 'error' %}
-            <span class="badge bg-danger">Error</span>
-            {% elif ep.status == 'queued' %}
-            <span class="badge bg-info">Queued</span>
-            {% else %}
-            <span class="badge bg-secondary">{{ ep.status or 'Unknown' }}</span>
-            {% endif %}
-        </td>
-        <td>
+<div class="table-responsive">
+    <table class="table table-striped table-hover">
+        <thead class="table-light">
+            <tr>
+                <th>Feed</th>
+                <th>Title</th>
+                <th>Type</th>
+                <th>Released</th>
+                <th>Processed</th>
+                <th>Status</th>
+                <th>Preview</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ep in episodes %}
             {% set is_audio = ep.url.lower().endswith(('.mp3', '.m4a', '.wav', '.ogg', '.aac', '.flac')) %}
-            {% if is_audio %}
-            <audio controls preload="none" src="{{ ep.url }}" style="max-width: 200px; height: 32px;">
-                Your browser does not support the audio element.
-            </audio>
-            {% else %}
-            <a href="{{ ep.url }}" target="_blank" class="btn btn-sm btn-outline-secondary">View Original</a>
-            {% endif %}
-        </td>
-        <td>
-            <div class="btn-group btn-group-sm" role="group">
-                {% if ep.status == 'complete' %}
-                {% if is_audio %}
-                <a href="{{ url_for('process_episode', url=ep.url, title=ep.title, feed_id=ep.feed_id, published=ep.published) }}" 
-                   class="btn btn-outline-primary">View</a>
-                {% else %}
-                <a href="{{ url_for('process_text_article', url=ep.url, title=ep.title, feed_id=ep.feed_id, published=ep.published) }}" 
-                   class="btn btn-outline-primary">View</a>
-                {% endif %}
-                {% endif %}
-                
-                {% if ep.status in ['complete', 'error'] %}
-                <a href="{{ url_for('reprocess_episode', episode_id=ep.id) }}" 
-                   class="btn btn-outline-warning"
-                   onclick="return confirm('Reprocess this episode? This will regenerate the summary and action items.');"
-                   data-processing="true">
-                    Reprocess
-                </a>
-                {% endif %}
-                
-                <a href="{{ url_for('delete_episode', episode_id=ep.id) }}" 
-                   class="btn btn-outline-danger"
-                   onclick="return confirm('Delete this episode and all its associated data?');">
-                    Delete
-                </a>
-            </div>
-        </td>
-    </tr>
-    {% endfor %}
-</table>
+            <tr>
+                <td>
+                    <small>{{ feeds.get(ep.feed_id, ep.feed_id) }}</small>
+                </td>
+                <td>{{ ep.title }}</td>
+                <td>
+                    {% if is_audio %}
+                    <span class="badge badge-audio">🎙️</span>
+                    {% else %}
+                    <span class="badge badge-text">📄</span>
+                    {% endif %}
+                </td>
+                <td class="text-nowrap">{{ ep.published[:10] if ep.published else '—' }}</td>
+                <td class="text-nowrap">{{ ep.processed_at[:10] if ep.processed_at else '—' }}</td>
+                <td>
+                    {% if ep.status == 'complete' %}
+                    <span class="badge bg-success">Complete</span>
+                    {% elif ep.status == 'processing' %}
+                    <span class="badge bg-warning text-dark">Processing</span>
+                    {% elif ep.status == 'error' %}
+                    <span class="badge bg-danger">Error</span>
+                    {% elif ep.status == 'queued' %}
+                    <span class="badge bg-info">Queued</span>
+                    {% else %}
+                    <span class="badge bg-secondary">{{ ep.status or 'Unknown' }}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if is_audio %}
+                    <audio controls preload="none" src="{{ ep.url }}" style="max-width: 180px; height: 32px;">
+                        Your browser does not support the audio element.
+                    </audio>
+                    {% else %}
+                    <a href="{{ ep.url }}" target="_blank" class="btn btn-sm btn-outline-secondary">View Original</a>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="btn-group btn-group-sm" role="group">
+                        {% if ep.status == 'complete' %}
+                        {% if is_audio %}
+                        <a href="{{ url_for('process_episode', url=ep.url, title=ep.title, feed_id=ep.feed_id, published=ep.published) }}" 
+                           class="btn btn-outline-primary">View</a>
+                        {% else %}
+                        <a href="{{ url_for('process_text_article', url=ep.url, title=ep.title, feed_id=ep.feed_id, published=ep.published) }}" 
+                           class="btn btn-outline-primary">View</a>
+                        {% endif %}
+                        {% endif %}
+                        
+                        {% if ep.status in ['complete', 'error'] %}
+                        <a href="{{ url_for('reprocess_episode', episode_id=ep.id) }}" 
+                           class="btn btn-outline-warning"
+                           onclick="return confirm('Reprocess this episode? This will regenerate the summary and action items.');"
+                           data-processing="true">
+                            Reprocess
+                        </a>
+                        {% endif %}
+                        
+                        <a href="{{ url_for('delete_episode', episode_id=ep.id) }}" 
+                           class="btn btn-outline-danger"
+                           onclick="return confirm('Delete this episode and all its associated data?');">
+                            Delete
+                        </a>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% else %}
-<p>No episodes queued or processed.</p>
+<div class="text-center py-5">
+    <div class="display-1 mb-3">📊</div>
+    <h3>No Episodes Found</h3>
+    {% if filter_status or filter_feed or filter_type or search_query %}
+    <p class="text-muted">No episodes match your current filters.</p>
+    {% else %}
+    <p class="text-muted">No episodes queued or processed yet.</p>
+    <a href="{{ url_for('index') }}" class="btn btn-primary">Browse Feeds</a>
+    {% endif %}
+</div>
 {% endif %}
 {% endblock %}

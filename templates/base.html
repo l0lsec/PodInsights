@@ -69,6 +69,63 @@
             border-radius: 3px;
             font-size: 0.9em;
         }
+        /* Filter bar styling */
+        .filter-bar {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid #dee2e6;
+        }
+        .filter-bar .form-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #6c757d;
+            margin-bottom: 0.25rem;
+            font-weight: 600;
+        }
+        .filter-bar .form-control,
+        .filter-bar .form-select {
+            font-size: 0.875rem;
+        }
+        /* Sortable column headers */
+        .sortable {
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .sortable:hover {
+            background-color: rgba(0,0,0,0.05);
+        }
+        .sortable::after {
+            content: ' ↕';
+            opacity: 0.3;
+            font-size: 0.75em;
+        }
+        .sortable.asc::after {
+            content: ' ↑';
+            opacity: 1;
+        }
+        .sortable.desc::after {
+            content: ' ↓';
+            opacity: 1;
+        }
+        /* Type badges */
+        .badge-audio {
+            background: linear-gradient(135deg, #6f42c1, #5a32a3);
+        }
+        .badge-text {
+            background: linear-gradient(135deg, #0d6efd, #0a58ca);
+        }
+        .badge-unknown {
+            background: #6c757d;
+        }
+        /* Results count */
+        .results-count {
+            font-size: 0.875rem;
+            color: #6c757d;
+        }
     </style>
 </head>
 <body>

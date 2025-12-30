@@ -1,35 +1,158 @@
 {% extends "base.html" %}
 {% block title %}PodInsights Feeds{% endblock %}
-{% block header %}Stored Podcast Feeds{% endblock %}
+{% block header %}Stored Feeds{% endblock %}
 {% block content %}
-<form method="post" class="row g-2 mb-3">
-    <div class="col-auto">
+<form method="post" class="row g-2 mb-4">
+    <div class="col-auto flex-grow-1">
         <label for="feed_url" class="visually-hidden">Add Feed URL</label>
-        <input type="text" class="form-control" name="feed_url" id="feed_url" size="60" placeholder="Feed URL">
+        <input type="text" class="form-control" name="feed_url" id="feed_url" placeholder="Enter RSS feed URL...">
     </div>
     <div class="col-auto">
-        <input type="submit" class="btn btn-primary" value="Add">
+        <button type="submit" class="btn btn-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-plus-lg me-1" viewBox="0 0 16 16">
+                <path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/>
+            </svg>
+            Add Feed
+        </button>
     </div>
 </form>
+
+{% if feeds or filter_type or search_query %}
+<!-- Filter Bar -->
+<div class="filter-bar">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label">Search</label>
+            <input type="text" class="form-control" name="q" value="{{ search_query }}" placeholder="Search feeds...">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Type</label>
+            <select name="type" class="form-select">
+                <option value="">All Types</option>
+                <option value="audio" {% if filter_type == 'audio' %}selected{% endif %}>🎙️ Audio</option>
+                <option value="text" {% if filter_type == 'text' %}selected{% endif %}>📄 Text</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Sort By</label>
+            <select name="sort" class="form-select">
+                <option value="title" {% if sort_by == 'title' %}selected{% endif %}>Title</option>
+                <option value="last_post" {% if sort_by == 'last_post' %}selected{% endif %}>Last Post</option>
+                <option value="type" {% if sort_by == 'type' %}selected{% endif %}>Type</option>
+                <option value="items" {% if sort_by == 'items' %}selected{% endif %}>Item Count</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Order</label>
+            <select name="order" class="form-select">
+                <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
+                <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-secondary w-100">Apply</button>
+        </div>
+    </form>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <span class="results-count">
+        Showing <strong>{{ feeds|length }}</strong> feed{% if feeds|length != 1 %}s{% endif %}
+        {% if filter_type or search_query %}
+        (filtered)
+        <a href="{{ url_for('index') }}" class="ms-2 text-decoration-none">Clear filters</a>
+        {% endif %}
+    </span>
+    <a href="{{ url_for('refresh_all_feeds') }}" class="btn btn-sm btn-outline-secondary" 
+       onclick="this.innerHTML='<span class=\'spinner-border spinner-border-sm\'></span> Refreshing...'; this.classList.add('disabled');">
+        🔄 Refresh All Metadata
+    </a>
+</div>
+
 {% if feeds %}
-<h2>Feeds</h2>
-<table class="table table-striped">
-    <tr><th>Title</th><th>URL</th><th>Actions</th></tr>
-    {% for f in feeds %}
-    <tr>
-        <td>{{ f.title }}</td>
-        <td class="text-truncate" style="max-width: 300px;">{{ f.url }}</td>
-        <td>
-            <div class="btn-group" role="group">
-                <a class="btn btn-sm btn-primary" href="{{ url_for('view_feed', feed_id=f.id) }}">Open</a>
-                <form method="post" action="{{ url_for('remove_feed', feed_id=f.id) }}" class="d-inline" 
-                      onsubmit="return confirm('Delete this feed and all its episodes, articles, and tickets?');">
-                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-                </form>
-            </div>
-        </td>
-    </tr>
-    {% endfor %}
-</table>
+<div class="table-responsive">
+    <table class="table table-striped table-hover">
+        <thead class="table-light">
+            <tr>
+                <th>Title</th>
+                <th>Type</th>
+                <th>Last Post</th>
+                <th>Items</th>
+                <th class="text-truncate" style="max-width: 200px;">URL</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for f in feeds %}
+            <tr>
+                <td>
+                    <a href="{{ url_for('view_feed', feed_id=f.id) }}" class="text-decoration-none fw-medium">
+                        {{ f.title }}
+                    </a>
+                </td>
+                <td>
+                    {% if f.type == 'audio' %}
+                    <span class="badge badge-audio">🎙️ Audio</span>
+                    {% elif f.type == 'text' %}
+                    <span class="badge badge-text">📄 Text</span>
+                    {% else %}
+                    <span class="badge badge-unknown" title="Open feed to detect type">❓</span>
+                    {% endif %}
+                </td>
+                <td class="text-nowrap">
+                    {% if f.last_post %}
+                    {{ f.last_post.strftime('%Y-%m-%d') }}
+                    {% set days_ago = (now - f.last_post).days if now else 0 %}
+                    {% if days_ago == 0 %}
+                    <small class="text-success">(today)</small>
+                    {% elif days_ago == 1 %}
+                    <small class="text-muted">(yesterday)</small>
+                    {% elif days_ago <= 7 %}
+                    <small class="text-muted">({{ days_ago }}d ago)</small>
+                    {% endif %}
+                    {% elif not f.last_checked %}
+                    <span class="text-muted" title="Click Open to fetch">—</span>
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if f.item_count %}
+                    <span class="badge bg-secondary">{{ f.item_count }}</span>
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </td>
+                <td class="text-truncate" style="max-width: 200px;">
+                    <small class="text-muted" title="{{ f.url }}">{{ f.url }}</small>
+                </td>
+                <td>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <a class="btn btn-primary" href="{{ url_for('view_feed', feed_id=f.id) }}">Open</a>
+                        <form method="post" action="{{ url_for('remove_feed', feed_id=f.id) }}" class="d-inline" 
+                              onsubmit="return confirm('Delete this feed and all its episodes, articles, and tickets?');">
+                            <button type="submit" class="btn btn-outline-danger">Delete</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="text-center py-5">
+    <div class="display-1 mb-3">🔍</div>
+    <h3>No Feeds Found</h3>
+    <p class="text-muted">No feeds match your current filters.</p>
+</div>
+{% endif %}
+
+{% else %}
+<div class="text-center py-5">
+    <div class="display-1 mb-3">📡</div>
+    <h3>No Feeds Yet</h3>
+    <p class="text-muted">Add your first RSS feed above to get started.</p>
+</div>
 {% endif %}
 {% endblock %}
