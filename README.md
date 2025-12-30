@@ -7,6 +7,7 @@ PodInsights is the ultimate podcast analysis tool for creators, researchers, and
 - **Accurate Podcast Transcription** - Convert any podcast episode into searchable text with industry-leading accuracy
 - **Intelligent Summarization** - Automatically generate concise summaries capturing the core message of any episode
 - **Action Item Extraction** - Never miss important tasks or follow-ups mentioned in podcast discussions
+- **Article Generation** - Transform podcast content into polished blog posts and articles on tech, privacy, and cybersecurity topics
 - **JIRA Integration** - Seamlessly create tickets from extracted action items for project management
 - **RSS Feed Support** - Process entire podcast feeds directly from their source
 
@@ -27,8 +28,68 @@ PodInsights is a simple command-line tool that helps you transcribe podcast audi
 - Python 3.11+
 - [`faster-whisper`](https://github.com/guillaumekln/faster-whisper) installed for audio transcription
 - [`openai`](https://pypi.org/project/openai/) and a valid `OPENAI_API_KEY` environment variable
-- Optional for the web interface: [`Flask`](https://palletsprojects.com/p/flask/), [`feedparser`](https://pypi.org/project/feedparser/), and [`requests`](https://pypi.org/project/requests/)
+- For the web interface: [`Flask`](https://palletsprojects.com/p/flask/), [`feedparser`](https://pypi.org/project/feedparser/), and [`requests`](https://pypi.org/project/requests/)
   (`sqlite3` from the standard library is used for episode tracking)
+
+## Installation
+
+### Setting Up a Virtual Environment
+
+1. **Create a virtual environment:**
+
+   ```bash
+   python3 -m venv venv
+   ```
+
+2. **Activate the virtual environment:**
+
+   - On macOS/Linux:
+     ```bash
+     source venv/bin/activate
+     ```
+
+   - On Windows:
+     ```bash
+     venv\Scripts\activate
+     ```
+
+3. **Install dependencies:**
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+   For audio transcription, also install `faster-whisper`:
+   ```bash
+   pip install faster-whisper
+   ```
+   > Note: `faster-whisper` may have platform-specific requirements. See [faster-whisper docs](https://github.com/guillaumekln/faster-whisper) for details.
+
+4. **Set up environment variables:**
+
+   ```bash
+   export OPENAI_API_KEY="your-api-key-here"
+   ```
+
+   For JIRA integration (optional):
+   ```bash
+   export JIRA_BASE_URL="https://example.atlassian.net"
+   export JIRA_EMAIL="your-email@example.com"
+   export JIRA_API_TOKEN="your-jira-token"
+   export JIRA_PROJECT_KEY="PROJ"
+   ```
+
+5. **Run the application:**
+
+   - CLI:
+     ```bash
+     python podinsights.py path/to/podcast.mp3
+     ```
+
+   - Web UI:
+     ```bash
+     python podinsights_web.py
+     ```
 
 ## Environment Variables
 
@@ -40,7 +101,7 @@ The following environment variables control authentication, model selection, and
 
 ### Optional (Advanced Usage)
 
-- **`OPENAI_MODEL`**: The OpenAI model to use for summarization and action item extraction (default: `gpt-4.1-nano`). Set this if you want to use a different model.
+- **`OPENAI_MODEL`**: The OpenAI model to use for summarization, action item extraction, and article generation (default: `gpt-4o`). Set this if you want to use a different model.
 
 ### Required for JIRA Integration (Web UI)
 
@@ -62,7 +123,7 @@ python podinsights.py path/to/podcast.mp3
 The script will attempt to transcribe the audio file using `faster-whisper`, then ask OpenAI to produce a short summary and extract action items. Results are also written to a JSON file next to the audio by default. You can specify a custom output path with the `--json` option. Use `--verbose` to enable debug logging.
 Progress messages are printed to the terminal so you can follow each step of the process.
 
-> **Note**: If the `faster-whisper` package is not installed, the script will raise a `NotImplementedError`. You can install it via `pip install faster-whisper` if you have internet access.
+> **Note**: If the `faster-whisper` package is not installed, the script will raise a `NotImplementedError`. Install all dependencies via `pip install -r requirements.txt`.
 > **Note**: Summarization and action item extraction require OpenAI access. Ensure `OPENAI_API_KEY` is set in your environment.
 
 The JSON file contains three fields:
@@ -73,10 +134,9 @@ The JSON file contains three fields:
 
 ## Usage (Web UI)
 
-A lightweight Flask application is provided in `podinsights_web.py`. It allows you to enter a podcast RSS feed URL, list the available episodes, and process an episode directly from your browser. Install the extra dependencies and run the app:
+A lightweight Flask application is provided in `podinsights_web.py`. It allows you to enter a podcast RSS feed URL, list the available episodes, and process an episode directly from your browser. Make sure you've installed dependencies from `requirements.txt`, then run:
 
 ```bash
-pip install flask feedparser requests
 python podinsights_web.py
 ```
 
@@ -90,6 +150,22 @@ You can listen to any episode directly from the browser. Each episode row now in
 
 Processed episodes are stored in a local SQLite database (`episodes.db`). Each episode records the transcript, summary, and action items. The feed view reports whether these pieces of information have been extracted.
 
+
+### Generating Articles
+
+Transform podcast insights into polished articles for your blog or publication. After processing an episode, use the **Generate Article** section to create content focused on specific topics like cybersecurity, privacy, or emerging technology trends.
+
+1. Process a podcast episode to get the transcript and summary
+2. Scroll to the "Generate Article" section
+3. Enter a topic or angle (e.g., "Privacy implications of AI voice assistants")
+4. Select an article style:
+   - **Blog Post** - Conversational and engaging
+   - **News Article** - Factual and objective reporting
+   - **Opinion/Editorial** - Analysis with perspective
+   - **Technical Deep-Dive** - Detailed for practitioners
+5. Click **Generate Article**
+
+All generated articles are saved and can be accessed from the **Articles** page in the navigation.
 
 ### Creating JIRA Tickets
 

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Article Generation Error | PodInsights{% endblock %}
+{% block header %}Article Generation Failed{% endblock %}
+{% block content %}
+<div class="alert alert-danger" role="alert">
+    <h4 class="alert-heading">❌ Could Not Generate Article</h4>
+    <p>An error occurred while generating the article:</p>
+    <pre class="bg-light text-dark p-3 rounded">{{ error }}</pre>
+    <hr>
+    <p class="mb-0">
+        This might be due to API rate limits, an invalid API key, or a temporary service issue. Please try again.
+    </p>
+</div>
+
+<div class="mt-4">
+    {% if feed_id %}
+    <a href="{{ url_for('process_episode', url=episode_url, feed_id=feed_id) }}" class="btn btn-primary">Back to Episode</a>
+    {% else %}
+    <a href="{{ url_for('index') }}" class="btn btn-secondary">Home</a>
+    {% endif %}
+</div>
+{% endblock %}
+

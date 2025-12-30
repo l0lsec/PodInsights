@@ -5,7 +5,7 @@ import json
 import logging
 from typing import List
 
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-nano")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,111 @@ def extract_action_items(text: str) -> List[str]:
     except Exception as exc:
         logger.exception("OpenAI action item extraction failed")
         raise RuntimeError("Failed to extract action items with OpenAI") from exc
+
+
+def generate_article(
+    transcript: str,
+    summary: str,
+    topic: str,
+    podcast_title: str,
+    episode_title: str,
+    style: str = "blog",
+    extra_context: str | None = None,
+) -> str:
+    """Generate an article about a specific topic based on podcast content.
+
+    Parameters
+    ----------
+    transcript: str
+        The full podcast transcript.
+    summary: str
+        A summary of the podcast episode.
+    topic: str
+        The specific topic or angle the user wants the article to focus on.
+    podcast_title: str
+        The name of the podcast for attribution.
+    episode_title: str
+        The title of the specific episode.
+    style: str
+        The article style (blog, news, opinion, technical). Defaults to blog.
+    extra_context: str | None
+        Optional additional context or instructions from the user.
+
+    Returns
+    -------
+    str
+        The generated article in markdown format.
+    """
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        if not client.api_key:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
+
+        style_guides = {
+            "blog": "Write in an engaging, conversational blog style with a personal voice.",
+            "news": "Write in a professional news article style, factual and objective.",
+            "opinion": "Write as an opinion/editorial piece with clear perspective and analysis.",
+            "technical": "Write as a technical deep-dive with detailed explanations for practitioners.",
+        }
+        style_instruction = style_guides.get(style, style_guides["blog"])
+
+        # Build extra context section if provided
+        extra_context_section = ""
+        if extra_context:
+            extra_context_section = (
+                f"\nADDITIONAL CONTEXT FROM THE AUTHOR:\n{extra_context}\n\n"
+                "Please incorporate the above context, insights, or instructions into the article.\n"
+            )
+
+        logger.debug("Generating article about: %s", topic)
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an expert tech writer specializing in cybersecurity, privacy, "
+                        "and technology topics. You write compelling, well-researched articles "
+                        "that inform and engage readers. Use markdown formatting for the article "
+                        "with proper headings, paragraphs, and emphasis where appropriate."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Based on the following podcast content, write an article focused on: {topic}\n\n"
+                        f"Style: {style_instruction}\n\n"
+                        f"SOURCE PODCAST: {podcast_title}\n"
+                        f"EPISODE: {episode_title}\n\n"
+                        f"{extra_context_section}"
+                        f"PODCAST SUMMARY:\n{summary}\n\n"
+                        f"FULL TRANSCRIPT:\n{transcript[:15000]}\n\n"  # Limit to avoid token limits
+                        "Write a compelling article (800-1500 words) that:\n"
+                        "1. Has an attention-grabbing headline\n"
+                        "2. Provides valuable insights on the topic\n"
+                        "3. References specific points from the podcast\n"
+                        "4. Includes a strong conclusion with takeaways\n"
+                        "5. Is suitable for a tech/security focused audience\n"
+                        "6. IMPORTANT: At the end of the article, include a section titled "
+                        "'## Listen to the Full Episode' that credits the source podcast by name, "
+                        "mentions the specific episode title, and encourages readers to check out "
+                        "the podcast for the full discussion and more great content. Make this feel "
+                        "genuine and enthusiastic, not like a generic disclaimer."
+                    ),
+                },
+            ],
+            temperature=0.7,
+            max_tokens=4000,
+        )
+        article = response.choices[0].message.content.strip()
+        logger.debug("Article generated successfully")
+        return article
+    except Exception as exc:
+        logger.exception("Article generation failed")
+        raise RuntimeError("Failed to generate article with OpenAI") from exc
 
 
 def write_results_json(transcript: str, summary: str, actions: List[str], output_path: str) -> None:

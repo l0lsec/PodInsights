@@ -57,6 +57,20 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
+        # Generated articles are stored here
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS articles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER,
+                topic TEXT,
+                style TEXT,
+                content TEXT,
+                created_at TEXT,
+                FOREIGN KEY(episode_id) REFERENCES episodes(id)
+            )
+            """
+        )
         # Upgrade any existing DB with newer columns
         cur = conn.execute("PRAGMA table_info(episodes)")
         columns = [row[1] for row in cur.fetchall()]
@@ -247,6 +261,78 @@ def list_tickets(
                 JOIN episodes e ON jt.episode_id = e.id
                 WHERE jt.episode_id = ?
                 ORDER BY jt.id
+                """,
+                (episode_id,),
+            )
+        return cur.fetchall()
+
+
+def add_article(
+    episode_id: int,
+    topic: str,
+    style: str,
+    content: str,
+    db_path: str = DB_PATH,
+) -> int:
+    """Save a generated article and return its id."""
+    created_at = datetime.utcnow().isoformat(timespec="seconds")
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO articles (episode_id, topic, style, content, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (episode_id, topic, style, content, created_at),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_article(article_id: int, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
+    """Retrieve a single article by its id."""
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            """
+            SELECT a.*, e.title AS episode_title, e.url AS episode_url, e.feed_id,
+                   f.title AS podcast_title, f.url AS podcast_url
+            FROM articles a
+            JOIN episodes e ON a.episode_id = e.id
+            LEFT JOIN feeds f ON e.feed_id = f.id
+            WHERE a.id = ?
+            """,
+            (article_id,),
+        )
+        return cur.fetchone()
+
+
+def list_articles(
+    episode_id: Optional[int] = None, db_path: str = DB_PATH
+) -> List[sqlite3.Row]:
+    """List articles, optionally filtered by episode."""
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        if episode_id is None:
+            cur = conn.execute(
+                """
+                SELECT a.*, e.title AS episode_title, e.url AS episode_url, e.feed_id,
+                       f.title AS podcast_title
+                FROM articles a
+                JOIN episodes e ON a.episode_id = e.id
+                LEFT JOIN feeds f ON e.feed_id = f.id
+                ORDER BY a.created_at DESC
+                """
+            )
+        else:
+            cur = conn.execute(
+                """
+                SELECT a.*, e.title AS episode_title, e.url AS episode_url, e.feed_id,
+                       f.title AS podcast_title
+                FROM articles a
+                JOIN episodes e ON a.episode_id = e.id
+                LEFT JOIN feeds f ON e.feed_id = f.id
+                WHERE a.episode_id = ?
+                ORDER BY a.created_at DESC
                 """,
                 (episode_id,),
             )

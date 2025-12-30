@@ -61,10 +61,62 @@
             <pre class="bg-light p-3 rounded">{{ transcript }}</pre>
         </details>
     </div>
+    <div class="col-12 mt-4">
+        <div class="card border-primary">
+            <div class="card-header bg-primary text-white">
+                <h2 class="mb-0 h5">✍️ Generate Article</h2>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">Create a blog post or article based on this podcast episode. Specify a topic to focus on—like cybersecurity, privacy, or a specific technology discussed.</p>
+                <form method="post" action="{{ url_for('create_article') }}" data-processing>
+                    <input type="hidden" name="episode_url" value="{{ url }}">
+                    <div class="mb-3">
+                        <label for="topic" class="form-label fw-bold">Topic / Focus</label>
+                        <input type="text" class="form-control" id="topic" name="topic" 
+                               placeholder="e.g., Privacy implications of AI assistants, Zero-trust security architecture, etc."
+                               required>
+                        <div class="form-text">What angle or subject should the article focus on?</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="style" class="form-label fw-bold">Article Style</label>
+                        <select class="form-select" id="style" name="style">
+                            <option value="blog" selected>Blog Post - Conversational and engaging</option>
+                            <option value="news">News Article - Factual and objective</option>
+                            <option value="opinion">Opinion/Editorial - Analysis with perspective</option>
+                            <option value="technical">Technical Deep-Dive - Detailed for practitioners</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="extra_context" class="form-label fw-bold">Additional Context <span class="text-muted fw-normal">(optional)</span></label>
+                        <textarea class="form-control" id="extra_context" name="extra_context" rows="3"
+                                  placeholder="Add any extra context, specific points to emphasize, your own insights, or instructions for the article..."></textarea>
+                        <div class="form-text">Provide additional information or guidance to shape the article—background context, key points to highlight, your perspective, etc.</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                        Generate Article
+                    </button>
+                </form>
+                {% if articles %}
+                <hr>
+                <h6>Previously Generated Articles</h6>
+                <ul class="list-unstyled">
+                {% for a in articles %}
+                    <li class="mb-1">
+                        <a href="{{ url_for('view_article', article_id=a.id) }}">{{ a.topic }}</a>
+                        <span class="badge bg-secondary">{{ a.style }}</span>
+                        <small class="text-muted">{{ a.created_at }}</small>
+                    </li>
+                {% endfor %}
+                </ul>
+                {% endif %}
+            </div>
+        </div>
+    </div>
 </div>
 {% if feed_id %}
-<p><a class="btn btn-secondary" href="{{ url_for('view_feed', feed_id=feed_id) }}">Back to feed</a></p>
+<p class="mt-4"><a class="btn btn-secondary" href="{{ url_for('view_feed', feed_id=feed_id) }}">Back to feed</a></p>
 {% else %}
-<p><a class="btn btn-secondary" href="{{ url_for('index') }}">Home</a></p>
+<p class="mt-4"><a class="btn btn-secondary" href="{{ url_for('index') }}">Home</a></p>
 {% endif %}
 {% endblock %}

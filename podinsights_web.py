@@ -24,6 +24,9 @@ from database import (
     add_ticket,
     list_tickets,
     list_all_episodes,
+    add_article,
+    get_article,
+    list_articles,
 )
 from podinsights import (
     transcribe_audio,
@@ -31,6 +34,7 @@ from podinsights import (
     extract_action_items,
     write_results_json,
     configure_logging,
+    generate_article,
 )
 
 app = Flask(__name__)
@@ -311,6 +315,7 @@ def process_episode():
         for t in tickets:
             t["status"] = get_jira_issue_status(t["ticket_key"])
             t["transitions"] = get_jira_issue_transitions(t["ticket_key"])
+        articles = [dict(a) for a in list_articles(existing["id"])]
         return render_template(
             'result.html',
             title=existing["title"],
@@ -321,6 +326,7 @@ def process_episode():
             feed_id=feed_id,
             url=audio_url,
             tickets=tickets,
+            articles=articles,
             current_url=request.full_path,
         )
 
@@ -357,6 +363,7 @@ def process_episode():
         feed_id=feed_id,
         url=audio_url,
         tickets=[],
+        articles=[],
         current_url=request.full_path,
     )
 
@@ -427,6 +434,72 @@ def view_tickets():
         t["status"] = get_jira_issue_status(t["ticket_key"])
         t["transitions"] = get_jira_issue_transitions(t["ticket_key"])
     return render_template('tickets.html', tickets=tickets)
+
+
+@app.route('/generate_article', methods=['POST'])
+def create_article():
+    """Generate an article based on podcast content and user topic."""
+    episode_url = request.form.get('episode_url')
+    topic = request.form.get('topic', '').strip()
+    style = request.form.get('style', 'blog')
+    extra_context = request.form.get('extra_context', '').strip()
+
+    if not episode_url or not topic:
+        return redirect(request.referrer or url_for('index'))
+
+    episode = get_episode(episode_url)
+    if not episode:
+        return redirect(url_for('index'))
+
+    # Get the podcast (feed) title for attribution
+    feed = get_feed_by_id(episode['feed_id']) if episode['feed_id'] else None
+    podcast_title = feed['title'] if feed else "the podcast"
+    episode_title = episode['title'] or "this episode"
+
+    try:
+        # Generate article using OpenAI
+        article_content = generate_article(
+            transcript=episode['transcript'],
+            summary=episode['summary'],
+            topic=topic,
+            podcast_title=podcast_title,
+            episode_title=episode_title,
+            style=style,
+            extra_context=extra_context if extra_context else None,
+        )
+        # Save article to database
+        article_id = add_article(
+            episode_id=episode['id'],
+            topic=topic,
+            style=style,
+            content=article_content,
+        )
+        return redirect(url_for('view_article', article_id=article_id))
+    except Exception as exc:
+        app.logger.exception("Failed to generate article")
+        return render_template(
+            'article_error.html',
+            error=str(exc),
+            episode_url=episode_url,
+            feed_id=episode['feed_id'],
+        )
+
+
+@app.route('/article/<int:article_id>')
+def view_article(article_id: int):
+    """Display a generated article."""
+    article = get_article(article_id)
+    if not article:
+        return redirect(url_for('index'))
+    return render_template('article.html', article=dict(article))
+
+
+@app.route('/articles')
+def view_articles():
+    """Display all generated articles."""
+    articles = [dict(a) for a in list_articles()]
+    return render_template('articles.html', articles=articles)
+
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5001)))
