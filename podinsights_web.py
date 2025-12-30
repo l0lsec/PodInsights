@@ -15,12 +15,16 @@ from html import unescape
 from database import (
     init_db,
     get_episode,
+    get_episode_by_id,
     save_episode,
     queue_episode,
     update_episode_status,
+    delete_episode_by_id,
+    reset_episode_for_reprocess,
     add_feed,
     list_feeds,
     get_feed_by_id,
+    delete_feed,
     add_ticket,
     list_tickets,
     list_all_episodes,
@@ -219,19 +223,41 @@ def index():
     return render_template('feeds.html', feeds=feeds)
 
 
+@app.route('/feed/<int:feed_id>/delete', methods=['POST'])
+def remove_feed(feed_id: int):
+    """Delete a feed and all its associated data."""
+    delete_feed(feed_id)
+    return redirect(url_for('index'))
+
+
 @app.route('/feed/<int:feed_id>')
 def view_feed(feed_id: int):
-    """Display episodes for a particular feed."""
+    """Display episodes/articles for a particular feed with pagination."""
     feed = get_feed_by_id(feed_id)
     if not feed:
         return redirect(url_for('index'))
+    
+    # Pagination parameters
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    per_page = min(per_page, 50)  # Cap at 50 items per page
+    
     feed_data = feedparser.parse(feed['url'])
-    episodes = []
+    all_episodes = []
+    is_text_feed = True  # Assume text feed, switch to audio if we find enclosures
     for entry in feed_data.entries:
-        # Skip items without an audio enclosure
-        if not entry.get('enclosures'):
-            continue
-        url = entry.enclosures[0].href
+        # Determine if this is an audio podcast or text feed
+        has_audio = bool(entry.get('enclosures'))
+        if has_audio:
+            is_text_feed = False
+            url = entry.enclosures[0].href
+            item_type = 'audio'
+        else:
+            # Text feed - use link as unique identifier
+            url = entry.get('link', entry.get('id', ''))
+            item_type = 'text'
+            if not url:
+                continue
         ep_db = get_episode(url)
         status = {
             'transcribed': ep_db is not None and bool(ep_db['transcript']),
@@ -239,6 +265,12 @@ def view_feed(feed_id: int):
             'actions': ep_db is not None and bool(ep_db['action_items']),
             'state': ep_db['status'] if ep_db else 'new',
         }
+        # Get full content for text feeds, description for podcasts
+        content = ''
+        if hasattr(entry, 'content') and entry.content:
+            content = entry.content[0].get('value', '')
+        if not content:
+            content = entry.get('summary') or entry.get('description', '')
         # Prefer the summary element but fall back to description
         desc = entry.get('summary') or entry.get('description', '')
         clean_desc = strip_html(desc)
@@ -258,17 +290,42 @@ def view_feed(feed_id: int):
         elif getattr(entry, 'updated_parsed', None):
             published_ts = datetime.fromtimestamp(time.mktime(entry.updated_parsed))
         published_iso = published_ts.isoformat() if published_ts else None
-        episodes.append({
+        # Get author if available
+        author = entry.get('author', '')
+        all_episodes.append({
             'title': entry.title,
             'description': desc,
+            'content': content,
             'clean_description': clean_desc,
             'short_description': make_short_description(clean_desc),
             'image': img,
             'enclosure': url,
+            'link': entry.get('link', ''),
+            'author': author,
+            'type': item_type,
             'status': status,
             'published': published_iso,
         })
-    return render_template('feed.html', feed=feed, episodes=episodes)
+    
+    # Calculate pagination
+    total_items = len(all_episodes)
+    total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    episodes = all_episodes[start_idx:end_idx]
+    
+    pagination = {
+        'page': page,
+        'per_page': per_page,
+        'total_items': total_items,
+        'total_pages': total_pages,
+        'has_prev': page > 1,
+        'has_next': page < total_pages,
+        'prev_page': page - 1 if page > 1 else None,
+        'next_page': page + 1 if page < total_pages else None,
+    }
+    
+    return render_template('feed.html', feed=feed, episodes=episodes, is_text_feed=is_text_feed, pagination=pagination)
 
 
 @app.route('/enqueue')
@@ -283,6 +340,103 @@ def enqueue_episode():
     queue_episode(audio_url, title, feed_id, published)
     task_queue.put({'url': audio_url, 'title': title, 'feed_id': feed_id, 'published': published})
     return redirect(url_for('status_page'))
+
+
+@app.route('/process_text')
+def process_text_article():
+    """Process a text article (no transcription needed)."""
+    article_url = request.args.get('url')
+    title = request.args.get('title', 'Article')
+    feed_id = request.args.get('feed_id', type=int)
+    published = request.args.get('published')
+    description = ""
+    content = ""
+
+    if not article_url:
+        return redirect(url_for('index'))
+
+    app.logger.info("Processing text article: %s", article_url)
+
+    # Fetch content from the feed
+    if feed_id:
+        feed = get_feed_by_id(feed_id)
+        if feed:
+            feed_data = feedparser.parse(feed['url'])
+            for entry in feed_data.entries:
+                entry_url = entry.get('link', entry.get('id', ''))
+                if entry_url == article_url:
+                    desc = entry.get('summary') or entry.get('description', '')
+                    description = strip_html(desc)
+                    # Get full content
+                    if hasattr(entry, 'content') and entry.content:
+                        content = entry.content[0].get('value', '')
+                    if not content:
+                        content = desc
+                    content = strip_html(content)
+                    break
+
+    # Reuse previously processed data if available
+    existing = get_episode(article_url)
+    if existing:
+        transcript = existing["transcript"]
+        summary = existing["summary"]
+        actions = existing["action_items"].splitlines()
+        tickets = [dict(t) for t in list_tickets(existing["id"])]
+        for t in tickets:
+            t["status"] = get_jira_issue_status(t["ticket_key"])
+            t["transitions"] = get_jira_issue_transitions(t["ticket_key"])
+        articles = [dict(a) for a in list_articles(existing["id"])]
+        return render_template(
+            'result.html',
+            title=existing["title"],
+            transcript=transcript,
+            summary=summary,
+            actions=actions,
+            description=description,
+            feed_id=feed_id,
+            url=article_url,
+            tickets=tickets,
+            articles=articles,
+            current_url=request.full_path,
+            is_text=True,
+            original_link=article_url,
+        )
+
+    if not content:
+        app.logger.error("No content found for article: %s", article_url)
+        return redirect(url_for('view_feed', feed_id=feed_id))
+
+    # For text articles, content IS the transcript (no transcription needed)
+    transcript = content
+    app.logger.info("Article content loaded (%d chars)", len(transcript))
+
+    app.logger.info("Generating summary")
+    summary = summarize_text(transcript)
+    app.logger.info("Summary complete")
+
+    app.logger.info("Extracting action items")
+    actions = extract_action_items(transcript)
+    app.logger.info("Action item extraction complete")
+
+    # Persist results
+    save_episode(article_url, title, transcript, summary, actions, feed_id, published)
+
+    return render_template(
+        'result.html',
+        title=title,
+        transcript=transcript,
+        summary=summary,
+        actions=actions,
+        description=description,
+        feed_id=feed_id,
+        url=article_url,
+        tickets=[],
+        articles=[],
+        current_url=request.full_path,
+        is_text=True,
+        original_link=article_url,
+    )
+
 
 @app.route('/process')
 def process_episode():
@@ -426,6 +580,47 @@ def status_page():
     return render_template('status.html', episodes=episodes, feeds=feeds, sort=sort)
 
 
+@app.route('/episode/<int:episode_id>/reprocess')
+def reprocess_episode(episode_id: int):
+    """Reprocess an episode - clears existing data and requeues."""
+    episode = get_episode_by_id(episode_id)
+    if not episode:
+        return redirect(url_for('status_page'))
+
+    # Detect if this is audio or text
+    audio_extensions = ('.mp3', '.m4a', '.wav', '.ogg', '.aac', '.flac')
+    is_audio = episode['url'].lower().split('?')[0].endswith(audio_extensions)
+
+    # Reset episode data for reprocessing
+    reset_episode_for_reprocess(episode_id)
+
+    if is_audio:
+        # Queue for background processing
+        task_queue.put({
+            'url': episode['url'],
+            'title': episode['title'],
+            'feed_id': episode['feed_id'],
+            'published': episode['published'],
+        })
+        return redirect(url_for('status_page'))
+    else:
+        # Process text article directly
+        return redirect(url_for(
+            'process_text_article',
+            url=episode['url'],
+            title=episode['title'],
+            feed_id=episode['feed_id'],
+            published=episode['published'],
+        ))
+
+
+@app.route('/episode/<int:episode_id>/delete')
+def delete_episode(episode_id: int):
+    """Delete an episode and all associated data."""
+    delete_episode_by_id(episode_id)
+    return redirect(url_for('status_page'))
+
+
 @app.route('/tickets')
 def view_tickets():
     """Display all created JIRA tickets."""
@@ -438,7 +633,7 @@ def view_tickets():
 
 @app.route('/generate_article', methods=['POST'])
 def create_article():
-    """Generate an article based on podcast content and user topic."""
+    """Generate an article based on podcast or text article content."""
     episode_url = request.form.get('episode_url')
     topic = request.form.get('topic', '').strip()
     style = request.form.get('style', 'blog')
@@ -451,10 +646,14 @@ def create_article():
     if not episode:
         return redirect(url_for('index'))
 
-    # Get the podcast (feed) title for attribution
+    # Detect if this is a text article (not an audio file)
+    audio_extensions = ('.mp3', '.m4a', '.wav', '.ogg', '.aac', '.flac')
+    is_text_source = not episode_url.lower().split('?')[0].endswith(audio_extensions)
+
+    # Get the podcast/publication title for attribution
     feed = get_feed_by_id(episode['feed_id']) if episode['feed_id'] else None
-    podcast_title = feed['title'] if feed else "the podcast"
-    episode_title = episode['title'] or "this episode"
+    podcast_title = feed['title'] if feed else ("the publication" if is_text_source else "the podcast")
+    episode_title = episode['title'] or ("this article" if is_text_source else "this episode")
 
     try:
         # Generate article using OpenAI
@@ -466,6 +665,7 @@ def create_article():
             episode_title=episode_title,
             style=style,
             extra_context=extra_context if extra_context else None,
+            is_text_source=is_text_source,
         )
         # Save article to database
         article_id = add_article(

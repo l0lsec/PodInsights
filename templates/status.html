@@ -5,8 +5,8 @@
 {% if episodes %}
 <p>
     Sort by:
-    <a href="{{ url_for('status_page', sort='released') }}">Release date</a> |
-    <a href="{{ url_for('status_page', sort='processed') }}">Processed date</a>
+    <a href="{{ url_for('status_page', sort='released') }}" class="{% if sort == 'released' %}fw-bold{% endif %}">Release date</a> |
+    <a href="{{ url_for('status_page', sort='processed') }}" class="{% if sort == 'processed' %}fw-bold{% endif %}">Processed date</a>
 </p>
 <table class="table table-striped">
     <tr>
@@ -15,25 +15,65 @@
         <th>Released</th>
         <th>Processed</th>
         <th>Status</th>
-        <th>Play</th>
-        <th>View</th>
+        <th>Preview</th>
+        <th>Actions</th>
     </tr>
     {% for ep in episodes %}
     <tr>
         <td>{{ feeds.get(ep.feed_id, ep.feed_id) }}</td>
         <td>{{ ep.title }}</td>
-        <td>{{ ep.published or 'N/A' }}</td>
-        <td>{{ ep.processed_at or 'N/A' }}</td>
-        <td>{{ ep.status or 'queued' }}</td>
+        <td class="text-nowrap">{{ ep.published[:10] if ep.published else 'N/A' }}</td>
+        <td class="text-nowrap">{{ ep.processed_at[:10] if ep.processed_at else 'N/A' }}</td>
         <td>
-            <audio controls preload="none" src="{{ ep.url }}">
-                Your browser does not support the audio element.
-            </audio>
+            {% if ep.status == 'complete' %}
+            <span class="badge bg-success">Complete</span>
+            {% elif ep.status == 'processing' %}
+            <span class="badge bg-warning text-dark">Processing</span>
+            {% elif ep.status == 'error' %}
+            <span class="badge bg-danger">Error</span>
+            {% elif ep.status == 'queued' %}
+            <span class="badge bg-info">Queued</span>
+            {% else %}
+            <span class="badge bg-secondary">{{ ep.status or 'Unknown' }}</span>
+            {% endif %}
         </td>
         <td>
-        {% if ep.status == 'complete' %}
-            <a href="{{ url_for('process_episode', url=ep.url, title=ep.title, feed_id=ep.feed_id, published=ep.published) }}">View</a>
-        {% endif %}
+            {% set is_audio = ep.url.lower().endswith(('.mp3', '.m4a', '.wav', '.ogg', '.aac', '.flac')) %}
+            {% if is_audio %}
+            <audio controls preload="none" src="{{ ep.url }}" style="max-width: 200px; height: 32px;">
+                Your browser does not support the audio element.
+            </audio>
+            {% else %}
+            <a href="{{ ep.url }}" target="_blank" class="btn btn-sm btn-outline-secondary">View Original</a>
+            {% endif %}
+        </td>
+        <td>
+            <div class="btn-group btn-group-sm" role="group">
+                {% if ep.status == 'complete' %}
+                {% if is_audio %}
+                <a href="{{ url_for('process_episode', url=ep.url, title=ep.title, feed_id=ep.feed_id, published=ep.published) }}" 
+                   class="btn btn-outline-primary">View</a>
+                {% else %}
+                <a href="{{ url_for('process_text_article', url=ep.url, title=ep.title, feed_id=ep.feed_id, published=ep.published) }}" 
+                   class="btn btn-outline-primary">View</a>
+                {% endif %}
+                {% endif %}
+                
+                {% if ep.status in ['complete', 'error'] %}
+                <a href="{{ url_for('reprocess_episode', episode_id=ep.id) }}" 
+                   class="btn btn-outline-warning"
+                   onclick="return confirm('Reprocess this episode? This will regenerate the summary and action items.');"
+                   data-processing="true">
+                    Reprocess
+                </a>
+                {% endif %}
+                
+                <a href="{{ url_for('delete_episode', episode_id=ep.id) }}" 
+                   class="btn btn-outline-danger"
+                   onclick="return confirm('Delete this episode and all its associated data?');">
+                    Delete
+                </a>
+            </div>
         </td>
     </tr>
     {% endfor %}

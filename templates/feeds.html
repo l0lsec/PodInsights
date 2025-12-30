@@ -14,12 +14,20 @@
 {% if feeds %}
 <h2>Feeds</h2>
 <table class="table table-striped">
-    <tr><th>Title</th><th>URL</th><th>View</th></tr>
+    <tr><th>Title</th><th>URL</th><th>Actions</th></tr>
     {% for f in feeds %}
     <tr>
         <td>{{ f.title }}</td>
-        <td>{{ f.url }}</td>
-        <td><a class="btn btn-sm btn-primary" href="{{ url_for('view_feed', feed_id=f.id) }}">Open</a></td>
+        <td class="text-truncate" style="max-width: 300px;">{{ f.url }}</td>
+        <td>
+            <div class="btn-group" role="group">
+                <a class="btn btn-sm btn-primary" href="{{ url_for('view_feed', feed_id=f.id) }}">Open</a>
+                <form method="post" action="{{ url_for('remove_feed', feed_id=f.id) }}" class="d-inline" 
+                      onsubmit="return confirm('Delete this feed and all its episodes, articles, and tickets?');">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                </form>
+            </div>
+        </td>
     </tr>
     {% endfor %}
 </table>

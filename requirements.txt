@@ -3,6 +3,7 @@ flask>=3.0.0
 feedparser>=6.0.0
 requests>=2.31.0
 openai>=1.0.0
+python-dotenv>=1.0.0
 
 # Audio transcription (install separately if needed - may have platform-specific issues)
 # pip install faster-whisper

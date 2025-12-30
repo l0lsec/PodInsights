@@ -1,3 +1,5 @@
 *.db
 .env
 !.env.example
+*.pyc
+__pycache__/

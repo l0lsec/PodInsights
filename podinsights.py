@@ -128,25 +128,28 @@ def generate_article(
     episode_title: str,
     style: str = "blog",
     extra_context: str | None = None,
+    is_text_source: bool = False,
 ) -> str:
-    """Generate an article about a specific topic based on podcast content.
+    """Generate an article about a specific topic based on podcast or article content.
 
     Parameters
     ----------
     transcript: str
-        The full podcast transcript.
+        The full podcast transcript or article content.
     summary: str
-        A summary of the podcast episode.
+        A summary of the episode or article.
     topic: str
         The specific topic or angle the user wants the article to focus on.
     podcast_title: str
-        The name of the podcast for attribution.
+        The name of the podcast or publication for attribution.
     episode_title: str
-        The title of the specific episode.
+        The title of the specific episode or article.
     style: str
         The article style (blog, news, opinion, technical). Defaults to blog.
     extra_context: str | None
         Optional additional context or instructions from the user.
+    is_text_source: bool
+        True if the source is a text article, False if it's a podcast.
 
     Returns
     -------
@@ -177,6 +180,32 @@ def generate_article(
                 "Please incorporate the above context, insights, or instructions into the article.\n"
             )
 
+        # Adapt prompts based on source type
+        if is_text_source:
+            source_type = "article"
+            source_label = "SOURCE PUBLICATION"
+            content_label = "ARTICLE"
+            full_content_label = "FULL ARTICLE CONTENT"
+            credit_instruction = (
+                "6. IMPORTANT: At the end of the article, include a section titled "
+                "'## Read the Original Article' that credits the source publication by name, "
+                "mentions the specific article title, and encourages readers to check out "
+                "the original piece and the publication for more great journalism. Make this feel "
+                "genuine and appreciative, not like a generic disclaimer."
+            )
+        else:
+            source_type = "podcast"
+            source_label = "SOURCE PODCAST"
+            content_label = "EPISODE"
+            full_content_label = "FULL TRANSCRIPT"
+            credit_instruction = (
+                "6. IMPORTANT: At the end of the article, include a section titled "
+                "'## Listen to the Full Episode' that credits the source podcast by name, "
+                "mentions the specific episode title, and encourages readers to check out "
+                "the podcast for the full discussion and more great content. Make this feel "
+                "genuine and enthusiastic, not like a generic disclaimer."
+            )
+
         logger.debug("Generating article about: %s", topic)
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
@@ -193,24 +222,20 @@ def generate_article(
                 {
                     "role": "user",
                     "content": (
-                        f"Based on the following podcast content, write an article focused on: {topic}\n\n"
+                        f"Based on the following {source_type} content, write an article focused on: {topic}\n\n"
                         f"Style: {style_instruction}\n\n"
-                        f"SOURCE PODCAST: {podcast_title}\n"
-                        f"EPISODE: {episode_title}\n\n"
+                        f"{source_label}: {podcast_title}\n"
+                        f"{content_label}: {episode_title}\n\n"
                         f"{extra_context_section}"
-                        f"PODCAST SUMMARY:\n{summary}\n\n"
-                        f"FULL TRANSCRIPT:\n{transcript[:15000]}\n\n"  # Limit to avoid token limits
+                        f"SUMMARY:\n{summary}\n\n"
+                        f"{full_content_label}:\n{transcript[:15000]}\n\n"  # Limit to avoid token limits
                         "Write a compelling article (800-1500 words) that:\n"
                         "1. Has an attention-grabbing headline\n"
                         "2. Provides valuable insights on the topic\n"
-                        "3. References specific points from the podcast\n"
+                        f"3. References specific points from the {source_type}\n"
                         "4. Includes a strong conclusion with takeaways\n"
                         "5. Is suitable for a tech/security focused audience\n"
-                        "6. IMPORTANT: At the end of the article, include a section titled "
-                        "'## Listen to the Full Episode' that credits the source podcast by name, "
-                        "mentions the specific episode title, and encourages readers to check out "
-                        "the podcast for the full discussion and more great content. Make this feel "
-                        "genuine and enthusiastic, not like a generic disclaimer."
+                        f"{credit_instruction}"
                     ),
                 },
             ],

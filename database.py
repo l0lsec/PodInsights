@@ -108,6 +108,34 @@ def list_feeds(db_path: str = DB_PATH) -> List[sqlite3.Row]:
         return cur.fetchall()
 
 
+def delete_feed(feed_id: int, db_path: str = DB_PATH) -> None:
+    """Delete a feed and all associated episodes, articles, and tickets."""
+    with sqlite3.connect(db_path) as conn:
+        # Delete tickets for episodes in this feed
+        conn.execute(
+            """
+            DELETE FROM jira_tickets WHERE episode_id IN (
+                SELECT id FROM episodes WHERE feed_id = ?
+            )
+            """,
+            (feed_id,),
+        )
+        # Delete articles for episodes in this feed
+        conn.execute(
+            """
+            DELETE FROM articles WHERE episode_id IN (
+                SELECT id FROM episodes WHERE feed_id = ?
+            )
+            """,
+            (feed_id,),
+        )
+        # Delete episodes for this feed
+        conn.execute("DELETE FROM episodes WHERE feed_id = ?", (feed_id,))
+        # Delete the feed itself
+        conn.execute("DELETE FROM feeds WHERE id = ?", (feed_id,))
+        conn.commit()
+
+
 def add_feed(url: str, title: str, db_path: str = DB_PATH) -> int:
     """Insert a new feed if needed and return its ``id``."""
     with sqlite3.connect(db_path) as conn:
@@ -187,6 +215,41 @@ def update_episode_status(url: str, status: str, db_path: str = DB_PATH) -> None
             "UPDATE episodes SET status = ? WHERE url = ?",
             (status, url),
         )  # simple status update used by the worker thread
+        conn.commit()
+
+
+def get_episode_by_id(episode_id: int, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
+    """Retrieve an episode by its database ID."""
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,))
+        return cur.fetchone()
+
+
+def delete_episode_by_id(episode_id: int, db_path: str = DB_PATH) -> None:
+    """Delete an episode and all its associated articles and tickets."""
+    with sqlite3.connect(db_path) as conn:
+        # Delete associated tickets
+        conn.execute("DELETE FROM jira_tickets WHERE episode_id = ?", (episode_id,))
+        # Delete associated articles
+        conn.execute("DELETE FROM articles WHERE episode_id = ?", (episode_id,))
+        # Delete the episode
+        conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
+        conn.commit()
+
+
+def reset_episode_for_reprocess(episode_id: int, db_path: str = DB_PATH) -> None:
+    """Clear episode data to prepare for reprocessing."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE episodes 
+            SET transcript = NULL, summary = NULL, action_items = NULL, 
+                status = 'queued', processed_at = NULL
+            WHERE id = ?
+            """,
+            (episode_id,),
+        )
         conn.commit()
 
 

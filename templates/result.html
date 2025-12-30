@@ -2,9 +2,16 @@
 {% block title %}{{ title }}{% endblock %}
 {% block header %}{{ title }}{% endblock %}
 {% block content %}
+{% if is_text %}
+<div class="alert alert-light border mb-3">
+    <strong>📄 Text Article</strong> — 
+    <a href="{{ original_link }}" target="_blank" class="alert-link">Read original article ↗</a>
+</div>
+{% else %}
 <audio controls src="{{ url }}" class="w-100 mb-3">
     Your browser does not support the audio element.
 </audio>
+{% endif %}
 {% if description %}
 <p class="mb-4">{{ description }}</p>
 {% endif %}
@@ -55,9 +62,9 @@
         {% endif %}
     </div>
     <div class="col-12">
-        <h2>Transcript</h2>
+        <h2>{% if is_text %}Article Content{% else %}Transcript{% endif %}</h2>
         <details>
-            <summary class="mb-2">Show transcript</summary>
+            <summary class="mb-2">Show {% if is_text %}content{% else %}transcript{% endif %}</summary>
             <pre class="bg-light p-3 rounded">{{ transcript }}</pre>
         </details>
     </div>
@@ -67,7 +74,7 @@
                 <h2 class="mb-0 h5">✍️ Generate Article</h2>
             </div>
             <div class="card-body">
-                <p class="text-muted">Create a blog post or article based on this podcast episode. Specify a topic to focus on—like cybersecurity, privacy, or a specific technology discussed.</p>
+                <p class="text-muted">Create a blog post or article based on this {% if is_text %}source article{% else %}podcast episode{% endif %}. Specify a topic to focus on—like cybersecurity, privacy, or a specific technology discussed.</p>
                 <form method="post" action="{{ url_for('create_article') }}" data-processing>
                     <input type="hidden" name="episode_url" value="{{ url }}">
                     <div class="mb-3">
