@@ -406,6 +406,44 @@ def get_article(article_id: int, db_path: str = DB_PATH) -> Optional[sqlite3.Row
         return cur.fetchone()
 
 
+def update_article(
+    article_id: int,
+    topic: str | None = None,
+    style: str | None = None,
+    content: str | None = None,
+    db_path: str = DB_PATH,
+) -> None:
+    """Update an existing article's fields."""
+    with sqlite3.connect(db_path) as conn:
+        # Build update query dynamically based on provided fields
+        updates = []
+        params = []
+        if topic is not None:
+            updates.append("topic = ?")
+            params.append(topic)
+        if style is not None:
+            updates.append("style = ?")
+            params.append(style)
+        if content is not None:
+            updates.append("content = ?")
+            params.append(content)
+        
+        if updates:
+            params.append(article_id)
+            conn.execute(
+                f"UPDATE articles SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+            conn.commit()
+
+
+def delete_article(article_id: int, db_path: str = DB_PATH) -> None:
+    """Delete an article by its id."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM articles WHERE id = ?", (article_id,))
+        conn.commit()
+
+
 def list_articles(
     episode_id: Optional[int] = None, db_path: str = DB_PATH
 ) -> List[sqlite3.Row]:

@@ -33,6 +33,8 @@ from database import (
     add_article,
     get_article,
     list_articles,
+    update_article,
+    delete_article,
     update_feed_metadata,
 )
 from podinsights import (
@@ -42,6 +44,7 @@ from podinsights import (
     write_results_json,
     configure_logging,
     generate_article,
+    generate_social_copy,
 )
 
 app = Flask(__name__)
@@ -1022,6 +1025,55 @@ def view_article(article_id: int):
     if not article:
         return redirect(url_for('index'))
     return render_template('article.html', article=dict(article))
+
+
+@app.route('/article/<int:article_id>/edit', methods=['GET', 'POST'])
+def edit_article(article_id: int):
+    """Edit an existing article."""
+    article = get_article(article_id)
+    if not article:
+        return redirect(url_for('view_articles'))
+    
+    if request.method == 'POST':
+        topic = request.form.get('topic', '').strip()
+        style = request.form.get('style', '').strip()
+        content = request.form.get('content', '').strip()
+        
+        if topic and content:
+            update_article(article_id, topic=topic, style=style, content=content)
+            return redirect(url_for('view_article', article_id=article_id))
+    
+    return render_template('article_edit.html', article=dict(article))
+
+
+@app.route('/article/<int:article_id>/delete', methods=['POST'])
+def remove_article(article_id: int):
+    """Delete an article."""
+    delete_article(article_id)
+    return redirect(url_for('view_articles'))
+
+
+@app.route('/article/<int:article_id>/social', methods=['POST'])
+def generate_article_social(article_id: int):
+    """Generate social media promotional copy for an article."""
+    article = get_article(article_id)
+    if not article:
+        return {"error": "Article not found"}, 404
+    
+    platforms = request.form.getlist('platforms')
+    if not platforms:
+        platforms = ["twitter", "linkedin", "facebook", "threads", "bluesky"]
+    
+    try:
+        social_copy = generate_social_copy(
+            article_content=article['content'],
+            article_topic=article['topic'],
+            platforms=platforms,
+        )
+        return {"success": True, "social_copy": social_copy}
+    except Exception as exc:
+        app.logger.exception("Failed to generate social media copy")
+        return {"error": str(exc)}, 500
 
 
 @app.route('/articles')

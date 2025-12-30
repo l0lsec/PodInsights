@@ -285,6 +285,106 @@ def generate_article(
         raise RuntimeError("Failed to generate article with OpenAI") from exc
 
 
+def generate_social_copy(
+    article_content: str,
+    article_topic: str,
+    platforms: List[str] | None = None,
+) -> dict:
+    """Generate social media promotional copy with hashtags for different platforms.
+
+    Parameters
+    ----------
+    article_content: str
+        The article content to promote.
+    article_topic: str
+        The main topic/title of the article.
+    platforms: List[str] | None
+        List of platforms to generate copy for. Defaults to all major platforms.
+
+    Returns
+    -------
+    dict
+        Dictionary with platform names as keys and copy as values.
+    """
+    if platforms is None:
+        platforms = ["twitter", "linkedin", "facebook", "threads", "bluesky"]
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        if not client.api_key:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
+
+        platform_guidelines = {
+            "twitter": "280 characters max, punchy and engaging, 3-5 relevant hashtags",
+            "linkedin": "Professional tone, 1-3 paragraphs, thought leadership angle, 3-5 professional hashtags",
+            "facebook": "Conversational, can be longer, engaging question or hook, 2-3 hashtags",
+            "threads": "Casual and authentic, similar to Twitter but can be slightly longer, 3-5 hashtags",
+            "bluesky": "Similar to Twitter, concise and engaging, 3-5 hashtags",
+            "instagram": "Visual-focused caption, emojis welcome, 10-15 relevant hashtags at the end",
+            "mastodon": "Thoughtful and community-focused, 3-5 hashtags, can use content warnings if needed",
+        }
+
+        platform_list = "\n".join([
+            f"- {p.upper()}: {platform_guidelines.get(p, 'Standard social media post with hashtags')}"
+            for p in platforms
+        ])
+
+        logger.debug("Generating social media copy for: %s", article_topic)
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a social media marketing expert specializing in tech and cybersecurity content. "
+                        "You create engaging, platform-optimized promotional copy that drives engagement and clicks. "
+                        "You understand each platform's unique culture and best practices."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Generate promotional social media copy for the following article:\n\n"
+                        f"TOPIC: {article_topic}\n\n"
+                        f"ARTICLE EXCERPT:\n{article_content[:3000]}\n\n"
+                        f"Create platform-specific promotional posts for each of these platforms:\n{platform_list}\n\n"
+                        "For each platform:\n"
+                        "1. Write copy optimized for that platform's audience and format\n"
+                        "2. Include relevant hashtags (tech, cybersecurity, privacy focused)\n"
+                        "3. Include a call-to-action or hook\n"
+                        "4. Make it shareable and engaging\n\n"
+                        "Format your response as JSON with platform names as keys. Example:\n"
+                        '{"twitter": "Your tweet here #hashtag", "linkedin": "Your LinkedIn post here"}'
+                    ),
+                },
+            ],
+            temperature=0.7,
+            max_tokens=2000,
+        )
+        
+        # Parse the JSON response
+        content = response.choices[0].message.content.strip()
+        # Handle markdown code blocks if present
+        if content.startswith("```"):
+            content = content.split("```")[1]
+            if content.startswith("json"):
+                content = content[4:]
+            content = content.strip()
+        
+        result = json.loads(content)
+        logger.debug("Social media copy generated for %d platforms", len(result))
+        return result
+    except json.JSONDecodeError as exc:
+        logger.warning("Failed to parse JSON response, returning raw content")
+        return {"raw": response.choices[0].message.content.strip()}
+    except Exception as exc:
+        logger.exception("Social media copy generation failed")
+        raise RuntimeError("Failed to generate social media copy with OpenAI") from exc
+
+
 def write_results_json(transcript: str, summary: str, actions: List[str], output_path: str) -> None:
     """Write the analysis results to ``output_path`` as JSON."""
 
