@@ -12,6 +12,8 @@ import requests
 from datetime import datetime
 import time
 from html import unescape
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 from database import (
     init_db,
     get_episode,
@@ -110,6 +112,95 @@ def make_short_description(text: str, limit: int = 200) -> str:
     if len(short) > limit:
         short = short[:limit].rstrip() + "..."
     return short
+
+
+def fetch_article_content(url: str, timeout: int = 15) -> str:
+    """Fetch and extract the main content from an article URL.
+    
+    Uses BeautifulSoup to extract readable article text from web pages.
+    Returns extracted text or empty string on failure.
+    """
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+        }
+        
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        
+        # Check content type - only process HTML
+        content_type = resp.headers.get('content-type', '').lower()
+        if 'text/html' not in content_type and 'application/xhtml' not in content_type:
+            return ""
+        
+        soup = BeautifulSoup(resp.content, 'lxml')
+        
+        # Remove unwanted elements
+        for element in soup.find_all(['script', 'style', 'nav', 'header', 'footer', 
+                                       'aside', 'iframe', 'noscript', 'form',
+                                       'button', 'input', 'select', 'textarea']):
+            element.decompose()
+        
+        # Remove common ad/tracking elements by class or id patterns
+        for element in soup.find_all(class_=re.compile(r'(ad|ads|advert|banner|sidebar|comment|share|social|related|recommend|newsletter|popup|modal|cookie)', re.I)):
+            element.decompose()
+        for element in soup.find_all(id=re.compile(r'(ad|ads|advert|banner|sidebar|comment|share|social|related|recommend|newsletter|popup|modal|cookie)', re.I)):
+            element.decompose()
+        
+        # Try to find the main content area
+        article_content = None
+        
+        # Priority 1: Look for article tag
+        article = soup.find('article')
+        if article:
+            article_content = article
+        
+        # Priority 2: Look for main content divs
+        if not article_content:
+            for selector in ['[role="main"]', '.article-content', '.post-content', 
+                            '.entry-content', '.content', '#content', '.story-body',
+                            '.article-body', '.post-body', 'main']:
+                found = soup.select_one(selector)
+                if found:
+                    article_content = found
+                    break
+        
+        # Priority 3: Use body as fallback
+        if not article_content:
+            article_content = soup.find('body') or soup
+        
+        # Extract text from paragraphs for cleaner output
+        paragraphs = article_content.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'pre', 'code'])
+        
+        if paragraphs:
+            text_parts = []
+            for p in paragraphs:
+                text = p.get_text(separator=' ', strip=True)
+                if text and len(text) > 20:  # Filter out short fragments
+                    text_parts.append(text)
+            content = '\n\n'.join(text_parts)
+        else:
+            # Fallback: get all text
+            content = article_content.get_text(separator='\n', strip=True)
+        
+        # Clean up whitespace
+        content = re.sub(r'\n{3,}', '\n\n', content)
+        content = re.sub(r'[ \t]+', ' ', content)
+        content = content.strip()
+        
+        return content
+        
+    except requests.exceptions.Timeout:
+        app.logger.warning("Timeout fetching article: %s", url)
+        return ""
+    except requests.exceptions.RequestException as e:
+        app.logger.warning("Failed to fetch article %s: %s", url, str(e))
+        return ""
+    except Exception as e:
+        app.logger.exception("Error extracting content from %s: %s", url, str(e))
+        return ""
 
 def create_jira_issue(summary: str, description: str) -> dict:
     """Create a JIRA issue using credentials from environment variables."""
@@ -496,7 +587,7 @@ def process_text_article():
 
     app.logger.info("Processing text article: %s", article_url)
 
-    # Fetch content from the feed
+    # Fetch content from the feed first
     if feed_id:
         feed = get_feed_by_id(feed_id)
         if feed:
@@ -506,13 +597,24 @@ def process_text_article():
                 if entry_url == article_url:
                     desc = entry.get('summary') or entry.get('description', '')
                     description = strip_html(desc)
-                    # Get full content
+                    # Get full content from feed
                     if hasattr(entry, 'content') and entry.content:
                         content = entry.content[0].get('value', '')
                     if not content:
                         content = desc
                     content = strip_html(content)
                     break
+    
+    # If RSS content is too short (likely just metadata/link), fetch the actual article
+    MIN_CONTENT_LENGTH = 500  # Minimum chars to consider content "full"
+    if len(content) < MIN_CONTENT_LENGTH:
+        app.logger.info("RSS content too short (%d chars), fetching from URL: %s", len(content), article_url)
+        fetched_content = fetch_article_content(article_url)
+        if fetched_content and len(fetched_content) > len(content):
+            app.logger.info("Fetched %d chars from article URL", len(fetched_content))
+            content = fetched_content
+        else:
+            app.logger.warning("Could not fetch better content from URL")
 
     # Reuse previously processed data if available
     existing = get_episode(article_url)
