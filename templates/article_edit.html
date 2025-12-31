@@ -199,11 +199,19 @@ function togglePreview() {
     }
 }
 
-// Auto-resize textarea
-document.getElementById('content').addEventListener('input', function() {
-    this.style.height = 'auto';
-    this.style.height = Math.max(400, this.scrollHeight) + 'px';
+// Auto-resize textarea (without bounce)
+const contentTextarea = document.getElementById('content');
+contentTextarea.addEventListener('input', function() {
+    // Only resize if content exceeds current height
+    if (this.scrollHeight > this.clientHeight) {
+        this.style.height = this.scrollHeight + 'px';
+    }
 });
+
+// Set initial height based on content
+if (contentTextarea.scrollHeight > 400) {
+    contentTextarea.style.height = contentTextarea.scrollHeight + 'px';
+}
 
 // AI Refinement functionality
 let refinedContent = '';
