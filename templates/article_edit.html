@@ -79,6 +79,67 @@
     </div>
 </form>
 
+<!-- AI Refinement Section -->
+<div class="card mt-4 border-primary">
+    <div class="card-header bg-primary text-white">
+        <strong>🤖 AI-Assisted Editing</strong>
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            Describe what changes you'd like to make, and AI will refine the article for you.
+        </p>
+        <div class="mb-3">
+            <label for="ai-feedback" class="form-label fw-bold">Your Instructions</label>
+            <textarea id="ai-feedback" class="form-control" rows="3" 
+                      placeholder="E.g., 'Make the introduction more engaging', 'Add more technical details about encryption', 'Shorten the conclusion', 'Change the tone to be more formal', 'Add a section about best practices'..."></textarea>
+        </div>
+        <div class="mb-3">
+            <label class="form-label small text-muted">Quick suggestions:</label>
+            <div class="d-flex flex-wrap gap-1">
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setSuggestion('Make the introduction more engaging and hook the reader')">🎣 Better intro</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setSuggestion('Add more technical details and examples')">🔧 More technical</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setSuggestion('Make it more concise, reduce length by about 30%')">✂️ Shorten</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setSuggestion('Expand with more details and examples')">📝 Expand</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setSuggestion('Make the tone more professional and formal')">👔 More formal</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setSuggestion('Make it more conversational and accessible')">💬 More casual</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setSuggestion('Improve the conclusion with actionable takeaways')">🎯 Better conclusion</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="setSuggestion('Fix any grammar or spelling issues and improve clarity')">✍️ Polish writing</button>
+            </div>
+        </div>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-primary" id="refine-btn" onclick="refineWithAI(false)">
+                ✨ Generate Refined Version
+            </button>
+            <button type="button" class="btn btn-outline-primary" onclick="refineWithAI(true)">
+                ✨ Refine & Auto-Save
+            </button>
+        </div>
+        
+        <div id="refine-loading" class="text-center py-4 d-none">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted">AI is refining your article...</p>
+        </div>
+        
+        <div id="refine-result" class="mt-4 d-none">
+            <div class="alert alert-success d-flex align-items-center">
+                <strong>✓ Refined version ready!</strong>
+                <span id="refine-saved-badge" class="badge bg-success ms-2 d-none">Auto-saved</span>
+            </div>
+            <div class="d-flex gap-2 mb-3">
+                <button type="button" class="btn btn-success" onclick="applyRefinedContent()">
+                    📥 Apply to Editor
+                </button>
+                <button type="button" class="btn btn-outline-secondary" onclick="toggleRefinedPreview()">
+                    👁️ Toggle Preview
+                </button>
+            </div>
+            <div id="refined-preview" class="border rounded bg-light" style="max-height: 500px; overflow-y: auto;">
+                <div id="refined-preview-content" class="article-content p-3"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
 #content {
     font-size: 0.9rem;
@@ -143,6 +204,88 @@ document.getElementById('content').addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = Math.max(400, this.scrollHeight) + 'px';
 });
+
+// AI Refinement functionality
+let refinedContent = '';
+
+function setSuggestion(text) {
+    document.getElementById('ai-feedback').value = text;
+}
+
+function refineWithAI(autoSave) {
+    const feedback = document.getElementById('ai-feedback').value.trim();
+    if (!feedback) {
+        alert('Please describe what changes you want to make');
+        return;
+    }
+    
+    const refineBtn = document.getElementById('refine-btn');
+    const loading = document.getElementById('refine-loading');
+    const result = document.getElementById('refine-result');
+    const savedBadge = document.getElementById('refine-saved-badge');
+    
+    // Show loading state
+    refineBtn.disabled = true;
+    loading.classList.remove('d-none');
+    result.classList.add('d-none');
+    
+    const formData = new FormData();
+    formData.append('feedback', feedback);
+    formData.append('auto_save', autoSave ? 'true' : 'false');
+    
+    fetch('{{ url_for("refine_article_with_ai", article_id=article.id) }}', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        loading.classList.add('d-none');
+        refineBtn.disabled = false;
+        
+        if (data.error) {
+            alert('Error: ' + data.error);
+            return;
+        }
+        
+        refinedContent = data.refined_content;
+        result.classList.remove('d-none');
+        
+        if (data.saved) {
+            savedBadge.classList.remove('d-none');
+            // Update the editor with saved content
+            document.getElementById('content').value = refinedContent;
+        } else {
+            savedBadge.classList.add('d-none');
+        }
+        
+        // Show preview
+        document.getElementById('refined-preview-content').innerHTML = marked.parse(refinedContent);
+        document.getElementById('refined-preview').classList.remove('d-none');
+    })
+    .catch(error => {
+        loading.classList.add('d-none');
+        refineBtn.disabled = false;
+        alert('Error: ' + error.message);
+    });
+}
+
+function applyRefinedContent() {
+    if (refinedContent) {
+        document.getElementById('content').value = refinedContent;
+        // If in preview mode, switch back to editor
+        if (isPreviewMode) {
+            togglePreview();
+        }
+        // Scroll to editor
+        document.getElementById('content').scrollIntoView({ behavior: 'smooth' });
+        alert('Refined content applied to editor. Don\'t forget to save!');
+    }
+}
+
+function toggleRefinedPreview() {
+    const preview = document.getElementById('refined-preview');
+    preview.classList.toggle('d-none');
+}
 </script>
 {% endblock %}
 

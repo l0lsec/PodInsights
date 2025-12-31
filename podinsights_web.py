@@ -45,6 +45,7 @@ from podinsights import (
     configure_logging,
     generate_article,
     generate_social_copy,
+    refine_article,
 )
 
 app = Flask(__name__)
@@ -1073,6 +1074,35 @@ def generate_article_social(article_id: int):
         return {"success": True, "social_copy": social_copy}
     except Exception as exc:
         app.logger.exception("Failed to generate social media copy")
+        return {"error": str(exc)}, 500
+
+
+@app.route('/article/<int:article_id>/refine', methods=['POST'])
+def refine_article_with_ai(article_id: int):
+    """Refine an article using AI based on user feedback."""
+    article = get_article(article_id)
+    if not article:
+        return {"error": "Article not found"}, 404
+    
+    feedback = request.form.get('feedback', '').strip()
+    if not feedback:
+        return {"error": "Please provide feedback for how to refine the article"}, 400
+    
+    try:
+        refined_content = refine_article(
+            current_content=article['content'],
+            user_feedback=feedback,
+            article_topic=article['topic'],
+        )
+        
+        # Optionally auto-save the refined content
+        auto_save = request.form.get('auto_save', 'false') == 'true'
+        if auto_save:
+            update_article(article_id, content=refined_content)
+        
+        return {"success": True, "refined_content": refined_content, "saved": auto_save}
+    except Exception as exc:
+        app.logger.exception("Failed to refine article")
         return {"error": str(exc)}, 500
 
 

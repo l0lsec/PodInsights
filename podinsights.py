@@ -385,6 +385,72 @@ def generate_social_copy(
         raise RuntimeError("Failed to generate social media copy with OpenAI") from exc
 
 
+def refine_article(
+    current_content: str,
+    user_feedback: str,
+    article_topic: str,
+) -> str:
+    """Refine an article based on user feedback using AI.
+
+    Parameters
+    ----------
+    current_content: str
+        The current article content in markdown.
+    user_feedback: str
+        User's instructions for how to modify the article.
+    article_topic: str
+        The article's topic for context.
+
+    Returns
+    -------
+    str
+        The refined article content in markdown.
+    """
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        if not client.api_key:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
+
+        logger.debug("Refining article based on feedback: %s", user_feedback[:100])
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an expert editor specializing in tech and cybersecurity content. "
+                        "You help refine and improve articles based on user feedback while maintaining "
+                        "the article's voice, structure, and key points. Return the complete revised "
+                        "article in markdown format."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Please revise the following article based on my feedback.\n\n"
+                        f"ARTICLE TOPIC: {article_topic}\n\n"
+                        f"CURRENT ARTICLE:\n{current_content}\n\n"
+                        f"MY FEEDBACK/INSTRUCTIONS:\n{user_feedback}\n\n"
+                        "Please apply my feedback and return the complete revised article in markdown format. "
+                        "Maintain the overall structure unless I specifically asked to change it. "
+                        "Keep the same tone and style unless instructed otherwise."
+                    ),
+                },
+            ],
+            temperature=0.7,
+            max_tokens=4000,
+        )
+        refined = response.choices[0].message.content.strip()
+        logger.debug("Article refined successfully")
+        return refined
+    except Exception as exc:
+        logger.exception("Article refinement failed")
+        raise RuntimeError("Failed to refine article with OpenAI") from exc
+
+
 def write_results_json(transcript: str, summary: str, actions: List[str], output_path: str) -> None:
     """Write the analysis results to ``output_path`` as JSON."""
 
