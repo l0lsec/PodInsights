@@ -22,11 +22,13 @@ from database import (
     queue_episode,
     update_episode_status,
     delete_episode_by_id,
+    delete_episodes_bulk,
     reset_episode_for_reprocess,
     add_feed,
     list_feeds,
     get_feed_by_id,
     delete_feed,
+    delete_feeds_bulk,
     add_ticket,
     list_tickets,
     list_all_episodes,
@@ -36,6 +38,14 @@ from database import (
     update_article,
     delete_article,
     update_feed_metadata,
+    add_social_post,
+    get_social_post,
+    list_social_posts,
+    delete_social_post,
+    delete_social_posts_bulk,
+    delete_social_posts_for_article,
+    mark_social_post_used,
+    update_social_post,
 )
 from podinsights import (
     transcribe_audio,
@@ -434,6 +444,15 @@ def index():
 def remove_feed(feed_id: int):
     """Delete a feed and all its associated data."""
     delete_feed(feed_id)
+    return redirect(url_for('index'))
+
+
+@app.route('/feeds/bulk-delete', methods=['POST'])
+def bulk_delete_feeds():
+    """Delete multiple feeds at once."""
+    feed_ids = request.form.getlist('feed_ids', type=int)
+    if feed_ids:
+        delete_feeds_bulk(feed_ids)
     return redirect(url_for('index'))
 
 
@@ -913,6 +932,15 @@ def delete_episode(episode_id: int):
     return redirect(url_for('status_page'))
 
 
+@app.route('/episodes/bulk-delete', methods=['POST'])
+def bulk_delete_episodes():
+    """Delete multiple episodes at once."""
+    episode_ids = request.form.getlist('episode_ids', type=int)
+    if episode_ids:
+        delete_episodes_bulk(episode_ids)
+    return redirect(url_for('status_page'))
+
+
 @app.route('/tickets')
 def view_tickets():
     """Display all created JIRA tickets."""
@@ -1025,7 +1053,22 @@ def view_article(article_id: int):
     article = get_article(article_id)
     if not article:
         return redirect(url_for('index'))
-    return render_template('article.html', article=dict(article))
+    
+    # Get saved social posts grouped by platform
+    posts = list_social_posts(article_id)
+    social_posts = {}
+    for post in posts:
+        platform = post['platform']
+        if platform not in social_posts:
+            social_posts[platform] = []
+        social_posts[platform].append({
+            'id': post['id'],
+            'content': post['content'],
+            'created_at': post['created_at'],
+            'used': bool(post['used']),
+        })
+    
+    return render_template('article.html', article=dict(article), social_posts=social_posts)
 
 
 @app.route('/article/<int:article_id>/edit', methods=['GET', 'POST'])
@@ -1056,7 +1099,7 @@ def remove_article(article_id: int):
 
 @app.route('/article/<int:article_id>/social', methods=['POST'])
 def generate_article_social(article_id: int):
-    """Generate social media promotional copy for an article."""
+    """Generate social media promotional copy for an article and save to database."""
     article = get_article(article_id)
     if not article:
         return {"error": "Article not found"}, 404
@@ -1065,16 +1108,119 @@ def generate_article_social(article_id: int):
     if not platforms:
         platforms = ["twitter", "linkedin", "facebook", "threads", "bluesky"]
     
+    # Get number of posts per platform (default to 1, max 10)
+    posts_per_platform = request.form.get('posts_per_platform', 1, type=int)
+    posts_per_platform = max(1, min(posts_per_platform, 10))
+    
     try:
         social_copy = generate_social_copy(
             article_content=article['content'],
             article_topic=article['topic'],
             platforms=platforms,
+            posts_per_platform=posts_per_platform,
         )
-        return {"success": True, "social_copy": social_copy}
+        
+        # Save generated posts to database
+        saved_posts = {}
+        for platform, copy_data in social_copy.items():
+            posts = copy_data if isinstance(copy_data, list) else [copy_data]
+            saved_posts[platform] = []
+            for post_content in posts:
+                post_id = add_social_post(
+                    article_id=article_id,
+                    platform=platform,
+                    content=post_content,
+                )
+                saved_posts[platform].append({
+                    'id': post_id,
+                    'content': post_content,
+                })
+        
+        return {
+            "success": True,
+            "social_copy": social_copy,
+            "saved_posts": saved_posts,
+            "posts_per_platform": posts_per_platform,
+        }
     except Exception as exc:
         app.logger.exception("Failed to generate social media copy")
         return {"error": str(exc)}, 500
+
+
+@app.route('/article/<int:article_id>/social/list', methods=['GET'])
+def list_article_social_posts(article_id: int):
+    """Get all saved social posts for an article."""
+    article = get_article(article_id)
+    if not article:
+        return {"error": "Article not found"}, 404
+    
+    posts = list_social_posts(article_id)
+    
+    # Group posts by platform
+    grouped = {}
+    for post in posts:
+        platform = post['platform']
+        if platform not in grouped:
+            grouped[platform] = []
+        grouped[platform].append({
+            'id': post['id'],
+            'content': post['content'],
+            'created_at': post['created_at'],
+            'used': bool(post['used']),
+        })
+    
+    return {"success": True, "posts": grouped}
+
+
+@app.route('/social/<int:post_id>/delete', methods=['POST'])
+def delete_social_post_route(post_id: int):
+    """Delete a single social post."""
+    delete_social_post(post_id)
+    return {"success": True}
+
+
+@app.route('/social/bulk-delete', methods=['POST'])
+def bulk_delete_social_posts():
+    """Delete multiple social posts at once."""
+    post_ids = request.form.getlist('post_ids', type=int)
+    if post_ids:
+        count = delete_social_posts_bulk(post_ids)
+        return {"success": True, "deleted": count}
+    return {"success": True, "deleted": 0}
+
+
+@app.route('/article/<int:article_id>/social/clear', methods=['POST'])
+def clear_article_social_posts(article_id: int):
+    """Delete all social posts for an article."""
+    count = delete_social_posts_for_article(article_id)
+    return {"success": True, "deleted": count}
+
+
+@app.route('/social/<int:post_id>/toggle-used', methods=['POST'])
+def toggle_social_post_used(post_id: int):
+    """Toggle the used status of a social post."""
+    post = get_social_post(post_id)
+    if not post:
+        return {"error": "Post not found"}, 404
+    
+    new_used = not bool(post['used'])
+    mark_social_post_used(post_id, new_used)
+    return {"success": True, "used": new_used}
+
+
+@app.route('/social/<int:post_id>/edit', methods=['POST'])
+def edit_social_post(post_id: int):
+    """Update the content of a social post."""
+    post = get_social_post(post_id)
+    if not post:
+        return {"error": "Post not found"}, 404
+    
+    content = request.form.get('content', '').strip()
+    if not content:
+        return {"error": "Content cannot be empty"}, 400
+    
+    update_social_post(post_id, content)
+    return {"success": True, "content": content}
 
 
 @app.route('/article/<int:article_id>/refine', methods=['POST'])

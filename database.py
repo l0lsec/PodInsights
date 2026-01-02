@@ -86,6 +86,20 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
+        # Social media posts generated for articles
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS social_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                article_id INTEGER,
+                platform TEXT,
+                content TEXT,
+                created_at TEXT,
+                used INTEGER DEFAULT 0,
+                FOREIGN KEY(article_id) REFERENCES articles(id)
+            )
+            """
+        )
         # Upgrade any existing DB with newer columns
         cur = conn.execute("PRAGMA table_info(episodes)")
         columns = [row[1] for row in cur.fetchall()]
@@ -149,6 +163,44 @@ def delete_feed(feed_id: int, db_path: str = DB_PATH) -> None:
         # Delete the feed itself
         conn.execute("DELETE FROM feeds WHERE id = ?", (feed_id,))
         conn.commit()
+
+
+def delete_feeds_bulk(feed_ids: List[int], db_path: str = DB_PATH) -> int:
+    """Delete multiple feeds and all their associated data. Returns count deleted."""
+    if not feed_ids:
+        return 0
+    placeholders = ",".join("?" * len(feed_ids))
+    with sqlite3.connect(db_path) as conn:
+        # Delete tickets for episodes in these feeds
+        conn.execute(
+            f"""
+            DELETE FROM jira_tickets WHERE episode_id IN (
+                SELECT id FROM episodes WHERE feed_id IN ({placeholders})
+            )
+            """,
+            feed_ids,
+        )
+        # Delete articles for episodes in these feeds
+        conn.execute(
+            f"""
+            DELETE FROM articles WHERE episode_id IN (
+                SELECT id FROM episodes WHERE feed_id IN ({placeholders})
+            )
+            """,
+            feed_ids,
+        )
+        # Delete episodes for these feeds
+        conn.execute(
+            f"DELETE FROM episodes WHERE feed_id IN ({placeholders})",
+            feed_ids,
+        )
+        # Delete the feeds themselves
+        cur = conn.execute(
+            f"DELETE FROM feeds WHERE id IN ({placeholders})",
+            feed_ids,
+        )
+        conn.commit()
+        return cur.rowcount
 
 
 def add_feed(url: str, title: str, db_path: str = DB_PATH) -> int:
@@ -273,6 +325,31 @@ def delete_episode_by_id(episode_id: int, db_path: str = DB_PATH) -> None:
         # Delete the episode
         conn.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
         conn.commit()
+
+
+def delete_episodes_bulk(episode_ids: List[int], db_path: str = DB_PATH) -> int:
+    """Delete multiple episodes and all their associated data. Returns count deleted."""
+    if not episode_ids:
+        return 0
+    placeholders = ",".join("?" * len(episode_ids))
+    with sqlite3.connect(db_path) as conn:
+        # Delete associated tickets
+        conn.execute(
+            f"DELETE FROM jira_tickets WHERE episode_id IN ({placeholders})",
+            episode_ids,
+        )
+        # Delete associated articles
+        conn.execute(
+            f"DELETE FROM articles WHERE episode_id IN ({placeholders})",
+            episode_ids,
+        )
+        # Delete the episodes
+        cur = conn.execute(
+            f"DELETE FROM episodes WHERE id IN ({placeholders})",
+            episode_ids,
+        )
+        conn.commit()
+        return cur.rowcount
 
 
 def reset_episode_for_reprocess(episode_id: int, db_path: str = DB_PATH) -> None:
@@ -438,8 +515,10 @@ def update_article(
 
 
 def delete_article(article_id: int, db_path: str = DB_PATH) -> None:
-    """Delete an article by its id."""
+    """Delete an article and its social posts by its id."""
     with sqlite3.connect(db_path) as conn:
+        # Delete associated social posts first
+        conn.execute("DELETE FROM social_posts WHERE article_id = ?", (article_id,))
         conn.execute("DELETE FROM articles WHERE id = ?", (article_id,))
         conn.commit()
 
@@ -475,3 +554,115 @@ def list_articles(
                 (episode_id,),
             )
         return cur.fetchall()
+
+
+# --- Social Posts Functions ---
+
+
+def add_social_post(
+    article_id: int,
+    platform: str,
+    content: str,
+    db_path: str = DB_PATH,
+) -> int:
+    """Save a generated social media post and return its id."""
+    created_at = datetime.utcnow().isoformat(timespec="seconds")
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO social_posts (article_id, platform, content, created_at, used)
+            VALUES (?, ?, ?, ?, 0)
+            """,
+            (article_id, platform, content, created_at),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def list_social_posts(
+    article_id: Optional[int] = None, db_path: str = DB_PATH
+) -> List[sqlite3.Row]:
+    """List social posts, optionally filtered by article."""
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        if article_id is None:
+            cur = conn.execute(
+                """
+                SELECT sp.*, a.topic AS article_topic
+                FROM social_posts sp
+                JOIN articles a ON sp.article_id = a.id
+                ORDER BY sp.created_at DESC
+                """
+            )
+        else:
+            cur = conn.execute(
+                """
+                SELECT sp.*, a.topic AS article_topic
+                FROM social_posts sp
+                JOIN articles a ON sp.article_id = a.id
+                WHERE sp.article_id = ?
+                ORDER BY sp.platform, sp.id
+                """,
+                (article_id,),
+            )
+        return cur.fetchall()
+
+
+def get_social_post(post_id: int, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
+    """Retrieve a single social post by its id."""
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("SELECT * FROM social_posts WHERE id = ?", (post_id,))
+        return cur.fetchone()
+
+
+def delete_social_post(post_id: int, db_path: str = DB_PATH) -> None:
+    """Delete a social post by its id."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM social_posts WHERE id = ?", (post_id,))
+        conn.commit()
+
+
+def delete_social_posts_bulk(post_ids: List[int], db_path: str = DB_PATH) -> int:
+    """Delete multiple social posts. Returns count deleted."""
+    if not post_ids:
+        return 0
+    placeholders = ",".join("?" * len(post_ids))
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            f"DELETE FROM social_posts WHERE id IN ({placeholders})",
+            post_ids,
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def delete_social_posts_for_article(article_id: int, db_path: str = DB_PATH) -> int:
+    """Delete all social posts for an article. Returns count deleted."""
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM social_posts WHERE article_id = ?",
+            (article_id,),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def mark_social_post_used(post_id: int, used: bool = True, db_path: str = DB_PATH) -> None:
+    """Mark a social post as used or unused."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE social_posts SET used = ? WHERE id = ?",
+            (1 if used else 0, post_id),
+        )
+        conn.commit()
+
+
+def update_social_post(post_id: int, content: str, db_path: str = DB_PATH) -> None:
+    """Update the content of a social post."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE social_posts SET content = ? WHERE id = ?",
+            (content, post_id),
+        )
+        conn.commit()

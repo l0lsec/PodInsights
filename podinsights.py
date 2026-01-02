@@ -289,6 +289,7 @@ def generate_social_copy(
     article_content: str,
     article_topic: str,
     platforms: List[str] | None = None,
+    posts_per_platform: int = 1,
 ) -> dict:
     """Generate social media promotional copy with hashtags for different platforms.
 
@@ -300,14 +301,20 @@ def generate_social_copy(
         The main topic/title of the article.
     platforms: List[str] | None
         List of platforms to generate copy for. Defaults to all major platforms.
+    posts_per_platform: int
+        Number of unique posts to generate per platform. Defaults to 1.
 
     Returns
     -------
     dict
-        Dictionary with platform names as keys and copy as values.
+        Dictionary with platform names as keys. Values are lists of posts if 
+        posts_per_platform > 1, otherwise single strings for backward compatibility.
     """
     if platforms is None:
         platforms = ["twitter", "linkedin", "facebook", "threads", "bluesky"]
+    
+    # Clamp posts_per_platform to reasonable range
+    posts_per_platform = max(1, min(posts_per_platform, 10))
 
     try:
         from openai import OpenAI
@@ -332,7 +339,24 @@ def generate_social_copy(
             for p in platforms
         ])
 
-        logger.debug("Generating social media copy for: %s", article_topic)
+        # Build the multi-post instruction
+        if posts_per_platform > 1:
+            multi_post_instruction = (
+                f"\nIMPORTANT: Generate {posts_per_platform} UNIQUE and DIFFERENT posts for EACH platform. "
+                "Each post should have a distinct angle, hook, or approach - suitable for posting on different days. "
+                "Vary the tone, focus, and call-to-action between posts. "
+                f"Return an array of {posts_per_platform} posts for each platform.\n\n"
+                "Format your response as JSON with platform names as keys and ARRAYS of posts as values. Example:\n"
+                '{"twitter": ["First tweet here #hashtag", "Second tweet here #tech"], '
+                '"linkedin": ["First LinkedIn post...", "Second LinkedIn post..."]}'
+            )
+        else:
+            multi_post_instruction = (
+                "\n\nFormat your response as JSON with platform names as keys. Example:\n"
+                '{"twitter": "Your tweet here #hashtag", "linkedin": "Your LinkedIn post here"}'
+            )
+
+        logger.debug("Generating %d social media post(s) per platform for: %s", posts_per_platform, article_topic)
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[
@@ -341,7 +365,9 @@ def generate_social_copy(
                     "content": (
                         "You are a social media marketing expert specializing in tech and cybersecurity content. "
                         "You create engaging, platform-optimized promotional copy that drives engagement and clicks. "
-                        "You understand each platform's unique culture and best practices."
+                        "You understand each platform's unique culture and best practices. "
+                        "When asked to create multiple posts, you ensure each one is genuinely unique with different "
+                        "angles, hooks, questions, or perspectives - not just rewording the same message."
                     ),
                 },
                 {
@@ -351,18 +377,17 @@ def generate_social_copy(
                         f"TOPIC: {article_topic}\n\n"
                         f"ARTICLE EXCERPT:\n{article_content[:3000]}\n\n"
                         f"Create platform-specific promotional posts for each of these platforms:\n{platform_list}\n\n"
-                        "For each platform:\n"
+                        "For each post:\n"
                         "1. Write copy optimized for that platform's audience and format\n"
                         "2. Include relevant hashtags (tech, cybersecurity, privacy focused)\n"
                         "3. Include a call-to-action or hook\n"
-                        "4. Make it shareable and engaging\n\n"
-                        "Format your response as JSON with platform names as keys. Example:\n"
-                        '{"twitter": "Your tweet here #hashtag", "linkedin": "Your LinkedIn post here"}'
+                        "4. Make it shareable and engaging\n"
+                        f"{multi_post_instruction}"
                     ),
                 },
             ],
-            temperature=0.7,
-            max_tokens=2000,
+            temperature=0.8,  # Slightly higher for more variety in multiple posts
+            max_tokens=3000 if posts_per_platform > 1 else 2000,
         )
         
         # Parse the JSON response

@@ -70,49 +70,141 @@
 
 <!-- Social Media Copy Generator -->
 <div class="card mt-4">
-    <div class="card-header bg-gradient" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+    <div class="card-header bg-gradient d-flex justify-content-between align-items-center" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
         <strong>📣 Social Media Promotion</strong>
+        {% if social_posts %}
+        {% set total_posts = namespace(count=0) %}
+        {% for platform, posts in social_posts.items() %}
+            {% set total_posts.count = total_posts.count + posts|length %}
+        {% endfor %}
+        <span class="badge bg-light text-dark">{{ total_posts.count }} saved post{% if total_posts.count != 1 %}s{% endif %}</span>
+        {% endif %}
     </div>
     <div class="card-body">
-        <p class="text-muted small mb-3">Generate platform-optimized promotional copy with relevant hashtags to share this article.</p>
-        
-        <div class="mb-3">
-            <label class="form-label fw-bold">Select Platforms</label>
-            <div class="d-flex flex-wrap gap-2" id="platform-checkboxes">
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" value="twitter" id="platform-twitter" checked>
-                    <label class="form-check-label" for="platform-twitter">𝕏 / Twitter</label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" value="linkedin" id="platform-linkedin" checked>
-                    <label class="form-check-label" for="platform-linkedin">LinkedIn</label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" value="facebook" id="platform-facebook" checked>
-                    <label class="form-check-label" for="platform-facebook">Facebook</label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" value="threads" id="platform-threads" checked>
-                    <label class="form-check-label" for="platform-threads">Threads</label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" value="bluesky" id="platform-bluesky" checked>
-                    <label class="form-check-label" for="platform-bluesky">Bluesky</label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" value="mastodon" id="platform-mastodon">
-                    <label class="form-check-label" for="platform-mastodon">Mastodon</label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" value="instagram" id="platform-instagram">
-                    <label class="form-check-label" for="platform-instagram">Instagram</label>
+        <!-- Saved Posts Section -->
+        {% if social_posts %}
+        <div id="saved-posts-section" class="mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="mb-0">💾 Saved Posts</h6>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearAllPosts()">
+                        🗑️ Clear All
+                    </button>
                 </div>
             </div>
+            <div id="saved-posts-container">
+                {% for platform, posts in social_posts.items() %}
+                <div class="social-copy-card mb-3" data-platform="{{ platform }}">
+                    <div class="social-copy-header" style="background-color: var(--platform-{{ platform }}-color, #6c757d)">
+                        <span class="social-icon">
+                            {% if platform == 'twitter' %}𝕏{% elif platform == 'linkedin' %}💼{% elif platform == 'facebook' %}📘{% elif platform == 'threads' %}🧵{% elif platform == 'bluesky' %}🦋{% elif platform == 'mastodon' %}🐘{% elif platform == 'instagram' %}📷{% else %}📱{% endif %}
+                        </span>
+                        <span class="social-platform">{{ platform|capitalize }}</span>
+                        <span class="badge bg-light text-dark ms-2">{{ posts|length }} post{% if posts|length != 1 %}s{% endif %}</span>
+                    </div>
+                    <div class="social-copy-body">
+                        {% for post in posts %}
+                        <div class="post-item {% if not loop.first %}mt-3 pt-3 border-top{% endif %}" data-post-id="{{ post.id }}">
+                            <div class="d-flex justify-content-between align-items-center mb-2 post-header">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge bg-secondary">Post {{ loop.index }}</span>
+                                    {% if post.used %}
+                                    <span class="badge bg-success used-badge">✓ Used</span>
+                                    {% endif %}
+                                </div>
+                                <div class="btn-group btn-group-sm post-actions">
+                                    <button class="btn btn-outline-secondary" onclick="copySavedPost(this, {{ post.id }})" title="Copy">
+                                        📋
+                                    </button>
+                                    <button class="btn btn-outline-primary" onclick="editPost({{ post.id }})" title="Edit">
+                                        ✏️
+                                    </button>
+                                    <button class="btn btn-outline-{{ 'success' if post.used else 'secondary' }}" onclick="toggleUsed({{ post.id }}, this)" title="Mark as used">
+                                        {% if post.used %}✓{% else %}○{% endif %}
+                                    </button>
+                                    <button class="btn btn-outline-danger" onclick="deletePost({{ post.id }}, this)" title="Delete">
+                                        🗑️
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="post-content-wrapper">
+                                <pre class="social-copy-text" id="saved-post-{{ post.id }}">{{ post.content }}</pre>
+                                <div class="edit-form d-none" id="edit-form-{{ post.id }}">
+                                    <textarea class="form-control mb-2" id="edit-textarea-{{ post.id }}" rows="4">{{ post.content }}</textarea>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-sm btn-success" onclick="savePostEdit({{ post.id }})">
+                                            💾 Save
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary" onclick="cancelPostEdit({{ post.id }})">
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            <hr>
         </div>
+        {% endif %}
         
-        <button type="button" class="btn btn-primary w-100" id="generate-social-btn" onclick="generateSocialCopy()">
-            ✨ Generate Social Media Copy
-        </button>
+        <!-- Generate New Posts Section -->
+        <div id="generate-section">
+            <h6 class="mb-3">✨ Generate New Posts</h6>
+            <p class="text-muted small mb-3">Generate additional platform-optimized promotional copy. New posts will be saved automatically.</p>
+            
+            <div class="row mb-3">
+                <div class="col-md-8">
+                    <label class="form-label fw-bold">Select Platforms</label>
+                    <div class="d-flex flex-wrap gap-2" id="platform-checkboxes">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="twitter" id="platform-twitter" checked>
+                            <label class="form-check-label" for="platform-twitter">𝕏 / Twitter</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="linkedin" id="platform-linkedin" checked>
+                            <label class="form-check-label" for="platform-linkedin">LinkedIn</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="facebook" id="platform-facebook" checked>
+                            <label class="form-check-label" for="platform-facebook">Facebook</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="threads" id="platform-threads" checked>
+                            <label class="form-check-label" for="platform-threads">Threads</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="bluesky" id="platform-bluesky" checked>
+                            <label class="form-check-label" for="platform-bluesky">Bluesky</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="mastodon" id="platform-mastodon">
+                            <label class="form-check-label" for="platform-mastodon">Mastodon</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="instagram" id="platform-instagram">
+                            <label class="form-check-label" for="platform-instagram">Instagram</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold" for="posts-per-platform">Posts per Platform</label>
+                    <div class="input-group">
+                        <button class="btn btn-outline-secondary" type="button" onclick="adjustPostCount(-1)">−</button>
+                        <input type="number" class="form-control text-center" id="posts-per-platform" value="1" min="1" max="10">
+                        <button class="btn btn-outline-secondary" type="button" onclick="adjustPostCount(1)">+</button>
+                    </div>
+                    <small class="text-muted">Generate 1-10 unique posts per platform</small>
+                </div>
+            </div>
+            
+            <button type="button" class="btn btn-primary w-100" id="generate-social-btn" onclick="generateSocialCopy()">
+                ✨ Generate & Save New Posts
+            </button>
+        </div>
         
         <div id="social-loading" class="text-center py-4 d-none">
             <div class="spinner-border text-primary" role="status"></div>
@@ -120,7 +212,7 @@
         </div>
         
         <div id="social-results" class="mt-4 d-none">
-            <!-- Results will be populated here -->
+            <!-- Newly generated results will be shown here -->
         </div>
     </div>
 </div>
@@ -201,6 +293,13 @@ function copyPlainText() {
     });
 }
 
+function adjustPostCount(delta) {
+    const input = document.getElementById('posts-per-platform');
+    let value = parseInt(input.value) || 1;
+    value = Math.max(1, Math.min(10, value + delta));
+    input.value = value;
+}
+
 function generateSocialCopy() {
     const btn = document.getElementById('generate-social-btn');
     const loading = document.getElementById('social-loading');
@@ -215,6 +314,9 @@ function generateSocialCopy() {
         return;
     }
     
+    // Get number of posts per platform
+    const postsPerPlatform = parseInt(document.getElementById('posts-per-platform').value) || 1;
+    
     // Show loading
     btn.classList.add('d-none');
     loading.classList.remove('d-none');
@@ -223,6 +325,7 @@ function generateSocialCopy() {
     // Make request
     const formData = new FormData();
     platforms.forEach(p => formData.append('platforms', p));
+    formData.append('posts_per_platform', postsPerPlatform);
     
     fetch('{{ url_for("generate_article_social", article_id=article.id) }}', {
         method: 'POST',
@@ -239,50 +342,17 @@ function generateSocialCopy() {
             return;
         }
         
-        // Build results HTML
-        let html = '';
-        const platformIcons = {
-            'twitter': '𝕏',
-            'linkedin': '💼',
-            'facebook': '📘',
-            'threads': '🧵',
-            'bluesky': '🦋',
-            'mastodon': '🐘',
-            'instagram': '📷'
-        };
-        const platformColors = {
-            'twitter': '#000000',
-            'linkedin': '#0077B5',
-            'facebook': '#1877F2',
-            'threads': '#000000',
-            'bluesky': '#0085FF',
-            'mastodon': '#6364FF',
-            'instagram': '#E4405F'
-        };
-        
-        for (const [platform, copy] of Object.entries(data.social_copy)) {
-            const icon = platformIcons[platform] || '📱';
-            const color = platformColors[platform] || '#6c757d';
-            const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
-            
-            html += `
-                <div class="social-copy-card mb-3">
-                    <div class="social-copy-header" style="background-color: ${color}">
-                        <span class="social-icon">${icon}</span>
-                        <span class="social-platform">${platformName}</span>
-                        <button class="btn btn-sm btn-light ms-auto" onclick="copySocialCopy(this, '${platform}')">
-                            📋 Copy
-                        </button>
-                    </div>
-                    <div class="social-copy-body">
-                        <pre class="social-copy-text" id="social-copy-${platform}">${escapeHtml(copy)}</pre>
-                    </div>
-                </div>
-            `;
-        }
-        
-        results.innerHTML = html;
+        // Posts are now saved - show success and reload to display them properly
+        results.innerHTML = `
+            <div class="alert alert-success">
+                <strong>✓ Posts generated and saved!</strong> 
+                Refreshing page to show your saved posts...
+            </div>
+        `;
         results.classList.remove('d-none');
+        
+        // Reload page to show all saved posts properly
+        setTimeout(() => location.reload(), 1000);
     })
     .catch(error => {
         loading.classList.add('d-none');
@@ -292,18 +362,185 @@ function generateSocialCopy() {
     });
 }
 
-function copySocialCopy(btn, platform) {
-    const text = document.getElementById(`social-copy-${platform}`).textContent;
+function copySavedPost(btn, postId) {
+    const text = document.getElementById(`saved-post-${postId}`).textContent;
     navigator.clipboard.writeText(text).then(() => {
         const original = btn.innerHTML;
-        btn.innerHTML = '✓ Copied!';
-        btn.classList.remove('btn-light');
+        btn.innerHTML = '✓';
+        btn.classList.remove('btn-outline-secondary');
         btn.classList.add('btn-success');
         setTimeout(() => {
             btn.innerHTML = original;
             btn.classList.remove('btn-success');
-            btn.classList.add('btn-light');
+            btn.classList.add('btn-outline-secondary');
         }, 2000);
+    });
+}
+
+function toggleUsed(postId, btn) {
+    fetch(`/social/${postId}/toggle-used`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const postItem = btn.closest('.post-item');
+            const usedBadge = postItem.querySelector('.used-badge');
+            
+            if (data.used) {
+                btn.innerHTML = '✓';
+                btn.classList.remove('btn-outline-secondary');
+                btn.classList.add('btn-outline-success');
+                if (!usedBadge) {
+                    const badgeContainer = postItem.querySelector('.d-flex.align-items-center.gap-2');
+                    const newBadge = document.createElement('span');
+                    newBadge.className = 'badge bg-success used-badge';
+                    newBadge.textContent = '✓ Used';
+                    badgeContainer.appendChild(newBadge);
+                }
+            } else {
+                btn.innerHTML = '○';
+                btn.classList.remove('btn-outline-success');
+                btn.classList.add('btn-outline-secondary');
+                if (usedBadge) {
+                    usedBadge.remove();
+                }
+            }
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+    });
+}
+
+function deletePost(postId, btn) {
+    if (!confirm('Delete this post?')) return;
+    
+    fetch(`/social/${postId}/delete`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const postItem = btn.closest('.post-item');
+            const card = postItem.closest('.social-copy-card');
+            const allPosts = card.querySelectorAll('.post-item');
+            
+            // If this is the last post in the platform, remove the whole card
+            if (allPosts.length === 1) {
+                card.remove();
+                
+                // If no more posts at all, remove the saved posts section
+                const container = document.getElementById('saved-posts-container');
+                if (container && container.children.length === 0) {
+                    document.getElementById('saved-posts-section').remove();
+                }
+            } else {
+                postItem.remove();
+                // Update post numbers
+                const remainingPosts = card.querySelectorAll('.post-item');
+                remainingPosts.forEach((p, i) => {
+                    const badge = p.querySelector('.badge.bg-secondary');
+                    if (badge) badge.textContent = `Post ${i + 1}`;
+                    p.classList.remove('mt-3', 'pt-3', 'border-top');
+                    if (i > 0) p.classList.add('mt-3', 'pt-3', 'border-top');
+                });
+                // Update count badge
+                const countBadge = card.querySelector('.social-copy-header .badge');
+                if (countBadge) {
+                    countBadge.textContent = `${remainingPosts.length} post${remainingPosts.length !== 1 ? 's' : ''}`;
+                }
+            }
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+    });
+}
+
+function clearAllPosts() {
+    if (!confirm('Delete ALL saved social posts for this article? This cannot be undone.')) return;
+    
+    fetch('{{ url_for("clear_article_social_posts", article_id=article.id) }}', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const section = document.getElementById('saved-posts-section');
+            if (section) section.remove();
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+    });
+}
+
+function editPost(postId) {
+    // Hide the display text and show the edit form
+    const displayEl = document.getElementById(`saved-post-${postId}`);
+    const editForm = document.getElementById(`edit-form-${postId}`);
+    const textarea = document.getElementById(`edit-textarea-${postId}`);
+    
+    displayEl.classList.add('d-none');
+    editForm.classList.remove('d-none');
+    textarea.focus();
+    
+    // Select all text for easy replacement
+    textarea.select();
+}
+
+function cancelPostEdit(postId) {
+    // Hide edit form and show display text
+    const displayEl = document.getElementById(`saved-post-${postId}`);
+    const editForm = document.getElementById(`edit-form-${postId}`);
+    const textarea = document.getElementById(`edit-textarea-${postId}`);
+    
+    // Reset textarea to original content
+    textarea.value = displayEl.textContent;
+    
+    editForm.classList.add('d-none');
+    displayEl.classList.remove('d-none');
+}
+
+function savePostEdit(postId) {
+    const textarea = document.getElementById(`edit-textarea-${postId}`);
+    const content = textarea.value.trim();
+    
+    if (!content) {
+        alert('Post content cannot be empty');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('content', content);
+    
+    fetch(`/social/${postId}/edit`, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Update the display text
+            const displayEl = document.getElementById(`saved-post-${postId}`);
+            const editForm = document.getElementById(`edit-form-${postId}`);
+            
+            displayEl.textContent = data.content;
+            editForm.classList.add('d-none');
+            displayEl.classList.remove('d-none');
+            
+            // Brief success indication
+            displayEl.style.backgroundColor = '#d4edda';
+            setTimeout(() => {
+                displayEl.style.backgroundColor = '';
+            }, 1000);
+        } else {
+            alert('Error: ' + (data.error || 'Failed to save'));
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
     });
 }
 
@@ -315,17 +552,34 @@ function escapeHtml(text) {
 </script>
 
 <style>
+:root {
+    --platform-twitter-color: #000000;
+    --platform-linkedin-color: #0077B5;
+    --platform-facebook-color: #1877F2;
+    --platform-threads-color: #000000;
+    --platform-bluesky-color: #0085FF;
+    --platform-mastodon-color: #6364FF;
+    --platform-instagram-color: #E4405F;
+}
 .social-copy-card {
     border-radius: 8px;
     overflow: hidden;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
+.social-copy-card[data-platform="twitter"] .social-copy-header { background-color: var(--platform-twitter-color); }
+.social-copy-card[data-platform="linkedin"] .social-copy-header { background-color: var(--platform-linkedin-color); }
+.social-copy-card[data-platform="facebook"] .social-copy-header { background-color: var(--platform-facebook-color); }
+.social-copy-card[data-platform="threads"] .social-copy-header { background-color: var(--platform-threads-color); }
+.social-copy-card[data-platform="bluesky"] .social-copy-header { background-color: var(--platform-bluesky-color); }
+.social-copy-card[data-platform="mastodon"] .social-copy-header { background-color: var(--platform-mastodon-color); }
+.social-copy-card[data-platform="instagram"] .social-copy-header { background-color: var(--platform-instagram-color); }
 .social-copy-header {
     display: flex;
     align-items: center;
     padding: 0.75rem 1rem;
     color: white;
     font-weight: 500;
+    background-color: #6c757d;
 }
 .social-icon {
     font-size: 1.25rem;
@@ -348,6 +602,31 @@ function escapeHtml(text) {
     background: transparent;
     border: none;
     color: #333;
+}
+.post-item {
+    position: relative;
+}
+.post-item .social-copy-text {
+    background: white;
+    padding: 0.75rem;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+}
+#posts-per-platform {
+    max-width: 80px;
+}
+.post-item .btn-group-sm .btn {
+    padding: 0.15rem 0.4rem;
+    font-size: 0.8rem;
+}
+.edit-form textarea {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    resize: vertical;
+}
+.post-content-wrapper .social-copy-text {
+    transition: background-color 0.3s ease;
 }
 </style>
 {% endblock %}
