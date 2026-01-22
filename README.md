@@ -40,42 +40,33 @@ PodInsights is the ultimate podcast analysis tool for creators, researchers, and
 ### Feeds Page
 Manage your podcast and text RSS feeds from a central dashboard. Add new feeds, open existing ones, or delete feeds you no longer need.
 
-![Feeds Page](screenshots/feeds-page.png)
 
 ### Podcast Feed View
 Browse episodes from audio podcast feeds with release dates, descriptions, and built-in audio players.
 
-![Podcast Feed View](screenshots/podcast-feed-view.png)
-
 ### Text Feed View
 Browse articles from text-based RSS feeds (like news sites and blogs) with thumbnail images and article previews.
 
-![Text Feed View](screenshots/text-feed-view.png)
 
 ### Episode Results
 View AI-generated summaries and extracted action items from processed episodes. The summary renders markdown formatting for easy reading.
 
-![Episode Results](screenshots/episode-result.png)
 
 ### Generate Article
 Transform podcast insights into polished blog posts and articles. Choose your topic, style, and add optional context.
 
-![Generate Article](screenshots/generate-article.png)
 
 ### Processing Status
 Track all processed episodes across feeds. Reprocess or delete episodes as needed.
 
-![Status Page](screenshots/status-page.png)
 
 ### Articles Page
 Access all generated articles in one place.
 
-![Articles Page](screenshots/articles-page.png)
 
 ### JIRA Tickets
 View and manage JIRA tickets created from action items.
 
-![Tickets Page](screenshots/tickets-page.png)
 
 ---
 
