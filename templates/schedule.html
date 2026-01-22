@@ -138,7 +138,15 @@
 <div class="card">
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <strong>📅 Scheduled Posts Queue</strong>
-        <span class="badge bg-primary">{{ scheduled_posts|length }} post{% if scheduled_posts|length != 1 %}s{% endif %}</span>
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge bg-primary">{{ scheduled_posts|length }} post{% if scheduled_posts|length != 1 %}s{% endif %}</span>
+            <button class="btn btn-sm btn-outline-danger d-none" id="delete-selected-btn" onclick="deleteSelected()">
+                🗑️ Delete Selected (<span id="selected-count">0</span>)
+            </button>
+            <button class="btn btn-sm btn-outline-danger" onclick="clearQueue()" title="Clear all pending posts">
+                🗑️ Clear Pending
+            </button>
+        </div>
     </div>
     <div class="card-body">
         {% if scheduled_posts %}
@@ -146,6 +154,9 @@
             <table class="table table-hover">
                 <thead>
                     <tr>
+                        <th style="width: 40px;">
+                            <input type="checkbox" class="form-check-input" id="select-all" onchange="toggleSelectAll(this)">
+                        </th>
                         <th>Status</th>
                         <th>Scheduled For</th>
                         <th>Type</th>
@@ -157,6 +168,10 @@
                 <tbody>
                     {% for post in scheduled_posts %}
                     <tr>
+                        <td>
+                            <input type="checkbox" class="form-check-input post-checkbox" 
+                                   data-post-id="{{ post.id }}" onchange="updateSelectedCount()">
+                        </td>
                         <td>
                             {% if post.status == 'pending' %}
                             <span class="badge bg-warning text-dark">⏳ Pending</span>
@@ -420,6 +435,83 @@ function deletePost(postId) {
         .catch(error => {
             alert('Error: ' + error.message);
         });
+}
+
+function clearQueue() {
+    if (!confirm('Clear ALL pending posts from the queue? This cannot be undone.')) return;
+    
+    fetch('/schedule/clear-queue', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert(data.error || 'Failed to clear queue');
+            }
+        })
+        .catch(error => {
+            alert('Error: ' + error.message);
+        });
+}
+
+function toggleSelectAll(checkbox) {
+    const checkboxes = document.querySelectorAll('.post-checkbox');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('.post-checkbox:checked');
+    const count = checkboxes.length;
+    const countSpan = document.getElementById('selected-count');
+    const deleteBtn = document.getElementById('delete-selected-btn');
+    const selectAll = document.getElementById('select-all');
+    
+    countSpan.textContent = count;
+    
+    if (count > 0) {
+        deleteBtn.classList.remove('d-none');
+    } else {
+        deleteBtn.classList.add('d-none');
+    }
+    
+    // Update select-all checkbox state
+    const allCheckboxes = document.querySelectorAll('.post-checkbox');
+    if (allCheckboxes.length > 0) {
+        selectAll.checked = count === allCheckboxes.length;
+        selectAll.indeterminate = count > 0 && count < allCheckboxes.length;
+    }
+}
+
+function deleteSelected() {
+    const checkboxes = document.querySelectorAll('.post-checkbox:checked');
+    const postIds = Array.from(checkboxes).map(cb => cb.dataset.postId);
+    
+    if (postIds.length === 0) {
+        alert('No posts selected');
+        return;
+    }
+    
+    if (!confirm(`Delete ${postIds.length} selected post${postIds.length !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    
+    fetch('/schedule/delete-selected', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_ids: postIds })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to delete posts');
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+    });
 }
 
 function showError(errorMessage) {

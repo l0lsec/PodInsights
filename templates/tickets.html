@@ -48,6 +48,11 @@
         <a href="{{ url_for('view_tickets') }}" class="ms-2 text-decoration-none">Clear filters</a>
         {% endif %}
     </span>
+    <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-danger d-none" id="delete-selected-btn" onclick="deleteSelectedTickets()">
+            🗑️ Delete Selected (<span id="selected-count">0</span>)
+        </button>
+    </div>
 </div>
 
 {% if tickets %}
@@ -55,18 +60,26 @@
     <table class="table table-striped table-hover">
         <thead class="table-light">
             <tr>
+                <th style="width: 40px;">
+                    <input type="checkbox" class="form-check-input" id="select-all" onchange="toggleSelectAll(this)">
+                </th>
                 <th>Episode</th>
                 <th>Preview</th>
                 <th>Summary</th>
                 <th>Action Item</th>
                 <th>Ticket</th>
                 <th>Status</th>
+                <th>Actions</th>
             </tr>
         </thead>
         <tbody>
             {% for t in tickets %}
             {% set is_audio = t.episode_url.lower().endswith(('.mp3', '.m4a', '.wav', '.ogg', '.aac', '.flac')) %}
             <tr>
+                <td>
+                    <input type="checkbox" class="form-check-input ticket-checkbox" 
+                           data-ticket-id="{{ t.id }}" onchange="updateSelectedCount()">
+                </td>
                 <td>
                     {% if is_audio %}
                     <a href="{{ url_for('process_episode', url=t.episode_url, title=t.episode_title, feed_id=t.feed_id, published=t.published) }}">
@@ -115,11 +128,94 @@
                     </form>
                     {% endif %}
                 </td>
+                <td>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteTicket({{ t.id }})" title="Delete from database">
+                        🗑️
+                    </button>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
+
+<script>
+function toggleSelectAll(checkbox) {
+    const checkboxes = document.querySelectorAll('.ticket-checkbox');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('.ticket-checkbox:checked');
+    const count = checkboxes.length;
+    const countSpan = document.getElementById('selected-count');
+    const deleteBtn = document.getElementById('delete-selected-btn');
+    const selectAll = document.getElementById('select-all');
+    
+    countSpan.textContent = count;
+    
+    if (count > 0) {
+        deleteBtn.classList.remove('d-none');
+    } else {
+        deleteBtn.classList.add('d-none');
+    }
+    
+    // Update select-all checkbox state
+    const allCheckboxes = document.querySelectorAll('.ticket-checkbox');
+    if (allCheckboxes.length > 0) {
+        selectAll.checked = count === allCheckboxes.length;
+        selectAll.indeterminate = count > 0 && count < allCheckboxes.length;
+    }
+}
+
+function deleteTicket(ticketId) {
+    if (!confirm('Delete this ticket from the database? (This does not delete the ticket in JIRA)')) return;
+    
+    fetch(`/tickets/${ticketId}/delete`, { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert(data.error || 'Failed to delete ticket');
+            }
+        })
+        .catch(error => {
+            alert('Error: ' + error.message);
+        });
+}
+
+function deleteSelectedTickets() {
+    const checkboxes = document.querySelectorAll('.ticket-checkbox:checked');
+    const ticketIds = Array.from(checkboxes).map(cb => cb.dataset.ticketId);
+    
+    if (ticketIds.length === 0) {
+        alert('No tickets selected');
+        return;
+    }
+    
+    if (!confirm(`Delete ${ticketIds.length} selected ticket${ticketIds.length !== 1 ? 's' : ''} from the database? (This does not delete them in JIRA)`)) return;
+    
+    fetch('/tickets/delete-selected', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticket_ids: ticketIds })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to delete tickets');
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+    });
+}
+</script>
 {% else %}
 <div class="text-center py-5">
     <div class="display-1 mb-3">🎫</div>

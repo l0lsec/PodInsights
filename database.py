@@ -504,6 +504,28 @@ def list_tickets(
         return cur.fetchall()
 
 
+def delete_ticket(ticket_id: int, db_path: str = DB_PATH) -> bool:
+    """Delete a JIRA ticket by its ID. Returns True if deleted."""
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute("DELETE FROM jira_tickets WHERE id = ?", (ticket_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def delete_tickets_bulk(ticket_ids: List[int], db_path: str = DB_PATH) -> int:
+    """Delete multiple JIRA tickets by their IDs. Returns count deleted."""
+    if not ticket_ids:
+        return 0
+    with sqlite3.connect(db_path) as conn:
+        placeholders = ",".join("?" for _ in ticket_ids)
+        cur = conn.execute(
+            f"DELETE FROM jira_tickets WHERE id IN ({placeholders})",
+            ticket_ids,
+        )
+        conn.commit()
+        return cur.rowcount
+
+
 def add_article(
     episode_id: int,
     topic: str,
@@ -1052,6 +1074,30 @@ def delete_scheduled_post(scheduled_id: int, db_path: str = DB_PATH) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute("DELETE FROM scheduled_posts WHERE id = ?", (scheduled_id,))
         conn.commit()
+
+
+def clear_pending_scheduled_posts(db_path: str = DB_PATH) -> int:
+    """Clear all pending scheduled posts. Returns the count of deleted posts."""
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM scheduled_posts WHERE status = 'pending'"
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def delete_scheduled_posts_bulk(post_ids: List[int], db_path: str = DB_PATH) -> int:
+    """Delete multiple scheduled posts by their IDs. Returns count deleted."""
+    if not post_ids:
+        return 0
+    with sqlite3.connect(db_path) as conn:
+        placeholders = ",".join("?" for _ in post_ids)
+        cur = conn.execute(
+            f"DELETE FROM scheduled_posts WHERE id IN ({placeholders})",
+            post_ids,
+        )
+        conn.commit()
+        return cur.rowcount
 
 
 def get_scheduled_posts_for_article(

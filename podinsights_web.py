@@ -31,6 +31,8 @@ from database import (
     delete_feeds_bulk,
     add_ticket,
     list_tickets,
+    delete_ticket,
+    delete_tickets_bulk,
     list_all_episodes,
     add_article,
     get_article,
@@ -60,6 +62,8 @@ from database import (
     update_scheduled_post_time,
     cancel_scheduled_post,
     delete_scheduled_post,
+    delete_scheduled_posts_bulk,
+    clear_pending_scheduled_posts,
     get_scheduled_posts_for_article,
     # Time slot functions for queue-based scheduling
     add_time_slot,
@@ -828,11 +832,22 @@ def create_jira():
     episode = get_episode(episode_url) if episode_url else None
     episode_id = episode['id'] if episode else None
     summary_text = episode['summary'] if episode else ''
+    
+    # Get the source (feed/podcast name)
+    source_name = ''
+    if episode and episode['feed_id']:
+        feed = get_feed_by_id(episode['feed_id'])
+        if feed:
+            source_name = feed['title']
+    
     created = []
     for item in items:
         try:
+            # Build description with source if available
+            source_line = f"Source: {source_name}\n" if source_name else ""
             description = (
                 f"Action item: {item}\n\n"
+                f"{source_line}"
                 f"From episode: {title}\n\n"
                 f"Episode summary:\n{summary_text}"
             )
@@ -857,6 +872,36 @@ def update_ticket():
     if ticket_key and transition_id:
         transition_jira_issue(ticket_key, transition_id)
     return redirect(ref)
+
+
+@app.route('/tickets/<int:ticket_id>/delete', methods=['POST'])
+def delete_ticket_route(ticket_id: int):
+    """Delete a single JIRA ticket from the database."""
+    success = delete_ticket(ticket_id)
+    if success:
+        return jsonify({"success": True, "message": "Ticket deleted"})
+    return jsonify({"error": "Ticket not found"}), 404
+
+
+@app.route('/tickets/delete-selected', methods=['POST'])
+def delete_tickets_selected():
+    """Delete multiple selected JIRA tickets."""
+    data = request.get_json()
+    ticket_ids = data.get('ticket_ids', []) if data else []
+    
+    if not ticket_ids:
+        return jsonify({"error": "No tickets selected"}), 400
+    
+    try:
+        ticket_ids = [int(tid) for tid in ticket_ids]
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid ticket IDs"}), 400
+    
+    count = delete_tickets_bulk(ticket_ids)
+    return jsonify({
+        "success": True,
+        "message": f"Deleted {count} ticket{'s' if count != 1 else ''}"
+    })
 
 
 @app.route('/status')
@@ -1771,6 +1816,38 @@ def schedule_delete(scheduled_id: int):
     """Delete a scheduled post."""
     delete_scheduled_post(scheduled_id)
     return jsonify({"success": True, "message": "Post deleted"})
+
+
+@app.route('/schedule/clear-queue', methods=['POST'])
+def schedule_clear_queue():
+    """Clear all pending scheduled posts."""
+    count = clear_pending_scheduled_posts()
+    return jsonify({
+        "success": True, 
+        "message": f"Cleared {count} pending post{'s' if count != 1 else ''} from queue"
+    })
+
+
+@app.route('/schedule/delete-selected', methods=['POST'])
+def schedule_delete_selected():
+    """Delete multiple selected scheduled posts."""
+    data = request.get_json()
+    post_ids = data.get('post_ids', []) if data else []
+    
+    if not post_ids:
+        return jsonify({"error": "No posts selected"}), 400
+    
+    # Ensure all IDs are integers
+    try:
+        post_ids = [int(pid) for pid in post_ids]
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid post IDs"}), 400
+    
+    count = delete_scheduled_posts_bulk(post_ids)
+    return jsonify({
+        "success": True,
+        "message": f"Deleted {count} post{'s' if count != 1 else ''}"
+    })
 
 
 @app.route('/schedule/<int:scheduled_id>/edit', methods=['POST'])
