@@ -87,6 +87,15 @@
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <h6 class="mb-0">💾 Saved Posts</h6>
                 <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-select-mode" onclick="toggleSelectMode()">
+                        ☑️ Select
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-primary d-none select-mode-btn" id="select-all-btn" onclick="selectAllPosts()">
+                        ☑️ Select All
+                    </button>
+                    <button type="button" class="btn btn-sm btn-danger d-none" id="delete-selected-btn" onclick="deleteSelectedPosts()">
+                        🗑️ Delete Selected (<span id="selected-count">0</span>)
+                    </button>
                     <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearAllPosts()">
                         🗑️ Clear All
                     </button>
@@ -95,18 +104,26 @@
             <div id="saved-posts-container">
                 {% for platform, posts in social_posts.items() %}
                 <div class="social-copy-card mb-3" data-platform="{{ platform }}">
-                    <div class="social-copy-header" style="background-color: var(--platform-{{ platform }}-color, #6c757d)">
-                        <span class="social-icon">
-                            {% if platform == 'twitter' %}𝕏{% elif platform == 'linkedin' %}💼{% elif platform == 'facebook' %}📘{% elif platform == 'threads' %}🧵{% elif platform == 'bluesky' %}🦋{% elif platform == 'mastodon' %}🐘{% elif platform == 'instagram' %}📷{% else %}📱{% endif %}
-                        </span>
-                        <span class="social-platform">{{ platform|capitalize }}</span>
-                        <span class="badge bg-light text-dark ms-2">{{ posts|length }} post{% if posts|length != 1 %}s{% endif %}</span>
+                    <div class="social-copy-header d-flex justify-content-between align-items-center" style="background-color: var(--platform-{{ platform }}-color, #6c757d)">
+                        <div>
+                            <span class="social-icon">
+                                {% if platform == 'twitter' %}𝕏{% elif platform == 'linkedin' %}💼{% elif platform == 'facebook' %}📘{% elif platform == 'threads' %}🧵{% elif platform == 'bluesky' %}🦋{% elif platform == 'mastodon' %}🐘{% elif platform == 'instagram' %}📷{% else %}📱{% endif %}
+                            </span>
+                            <span class="social-platform">{{ platform|capitalize }}</span>
+                            <span class="badge bg-light text-dark ms-2">{{ posts|length }} post{% if posts|length != 1 %}s{% endif %}</span>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-light d-none select-mode-btn platform-select-all" 
+                                onclick="selectPlatformPosts('{{ platform }}')" title="Select all {{ platform }} posts">
+                            ☑️ All
+                        </button>
                     </div>
                     <div class="social-copy-body">
                         {% for post in posts %}
                         <div class="post-item {% if not loop.first %}mt-3 pt-3 border-top{% endif %}" data-post-id="{{ post.id }}">
                             <div class="d-flex justify-content-between align-items-center mb-2 post-header">
                                 <div class="d-flex align-items-center gap-2">
+                                    <input type="checkbox" class="form-check-input post-select-checkbox d-none" 
+                                           data-post-id="{{ post.id }}" onchange="updateSelectedCount()">
                                     <span class="badge bg-secondary">Post {{ loop.index }}</span>
                                     {% if post.used %}
                                     <span class="badge bg-success used-badge">✓ Used</span>
@@ -194,11 +211,18 @@
                     <label class="form-label fw-bold" for="posts-per-platform">Posts per Platform</label>
                     <div class="input-group">
                         <button class="btn btn-outline-secondary" type="button" onclick="adjustPostCount(-1)">−</button>
-                        <input type="number" class="form-control text-center" id="posts-per-platform" value="1" min="1" max="10">
+                        <input type="number" class="form-control text-center" id="posts-per-platform" value="1" min="1" max="21">
                         <button class="btn btn-outline-secondary" type="button" onclick="adjustPostCount(1)">+</button>
                     </div>
-                    <small class="text-muted">Generate 1-10 unique posts per platform</small>
+                    <small class="text-muted">Generate 1-21 unique posts per platform</small>
                 </div>
+            </div>
+            
+            <div class="mb-3">
+                <label class="form-label fw-bold" for="social-context">Additional Context (optional)</label>
+                <textarea class="form-control" id="social-context" rows="3" 
+                    placeholder="Add any specific instructions, tone preferences, target audience details, key points to emphasize, or hashtags to include..."></textarea>
+                <small class="text-muted">This context will be included in the AI prompt to guide post generation</small>
             </div>
             
             <button type="button" class="btn btn-primary w-100" id="generate-social-btn" onclick="generateSocialCopy()">
@@ -264,6 +288,25 @@
     border-radius: 6px;
     overflow-x: auto;
 }
+
+/* Multi-select post styles */
+.post-select-checkbox {
+    width: 1.2em;
+    height: 1.2em;
+    cursor: pointer;
+    margin-right: 0.25rem;
+}
+.post-item:has(.post-select-checkbox:checked) {
+    background-color: rgba(220, 53, 69, 0.1);
+    border-radius: 6px;
+    margin-left: -0.5rem;
+    margin-right: -0.5rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+}
+.post-select-checkbox:checked {
+    accent-color: #dc3545;
+}
 </style>
 
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -296,7 +339,7 @@ function copyPlainText() {
 function adjustPostCount(delta) {
     const input = document.getElementById('posts-per-platform');
     let value = parseInt(input.value) || 1;
-    value = Math.max(1, Math.min(10, value + delta));
+    value = Math.max(1, Math.min(21, value + delta));
     input.value = value;
 }
 
@@ -322,10 +365,16 @@ function generateSocialCopy() {
     loading.classList.remove('d-none');
     results.classList.add('d-none');
     
+    // Get optional context
+    const extraContext = document.getElementById('social-context').value.trim();
+    
     // Make request
     const formData = new FormData();
     platforms.forEach(p => formData.append('platforms', p));
     formData.append('posts_per_platform', postsPerPlatform);
+    if (extraContext) {
+        formData.append('extra_context', extraContext);
+    }
     
     fetch('{{ url_for("generate_article_social", article_id=article.id) }}', {
         method: 'POST',
@@ -469,6 +518,155 @@ function clearAllPosts() {
         if (data.success) {
             const section = document.getElementById('saved-posts-section');
             if (section) section.remove();
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+    });
+}
+
+let selectModeActive = false;
+
+function toggleSelectMode() {
+    selectModeActive = !selectModeActive;
+    const checkboxes = document.querySelectorAll('.post-select-checkbox');
+    const toggleBtn = document.getElementById('toggle-select-mode');
+    const deleteBtn = document.getElementById('delete-selected-btn');
+    const selectModeBtns = document.querySelectorAll('.select-mode-btn');
+    
+    if (selectModeActive) {
+        checkboxes.forEach(cb => cb.classList.remove('d-none'));
+        selectModeBtns.forEach(btn => btn.classList.remove('d-none'));
+        toggleBtn.classList.remove('btn-outline-secondary');
+        toggleBtn.classList.add('btn-secondary');
+        toggleBtn.innerHTML = '✕ Cancel';
+    } else {
+        checkboxes.forEach(cb => {
+            cb.classList.add('d-none');
+            cb.checked = false;
+        });
+        selectModeBtns.forEach(btn => btn.classList.add('d-none'));
+        toggleBtn.classList.remove('btn-secondary');
+        toggleBtn.classList.add('btn-outline-secondary');
+        toggleBtn.innerHTML = '☑️ Select';
+        deleteBtn.classList.add('d-none');
+    }
+    updateSelectedCount();
+}
+
+function selectAllPosts() {
+    const checkboxes = document.querySelectorAll('.post-select-checkbox');
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    
+    // Toggle: if all are checked, uncheck all; otherwise check all
+    checkboxes.forEach(cb => cb.checked = !allChecked);
+    updateSelectedCount();
+    
+    // Update button text
+    const btn = document.getElementById('select-all-btn');
+    btn.innerHTML = allChecked ? '☑️ Select All' : '☐ Deselect All';
+}
+
+function selectPlatformPosts(platform) {
+    const card = document.querySelector(`.social-copy-card[data-platform="${platform}"]`);
+    if (!card) return;
+    
+    const checkboxes = card.querySelectorAll('.post-select-checkbox');
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    
+    // Toggle: if all platform posts are checked, uncheck them; otherwise check all
+    checkboxes.forEach(cb => cb.checked = !allChecked);
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const allCheckboxes = document.querySelectorAll('.post-select-checkbox');
+    const selected = document.querySelectorAll('.post-select-checkbox:checked');
+    const count = selected.length;
+    document.getElementById('selected-count').textContent = count;
+    
+    const deleteBtn = document.getElementById('delete-selected-btn');
+    if (count > 0 && selectModeActive) {
+        deleteBtn.classList.remove('d-none');
+    } else {
+        deleteBtn.classList.add('d-none');
+    }
+    
+    // Update Select All button text
+    const selectAllBtn = document.getElementById('select-all-btn');
+    if (selectAllBtn) {
+        const allChecked = allCheckboxes.length > 0 && allCheckboxes.length === selected.length;
+        selectAllBtn.innerHTML = allChecked ? '☐ Deselect All' : '☑️ Select All';
+    }
+}
+
+function deleteSelectedPosts() {
+    const selected = document.querySelectorAll('.post-select-checkbox:checked');
+    const postIds = Array.from(selected).map(cb => parseInt(cb.dataset.postId));
+    
+    if (postIds.length === 0) {
+        alert('No posts selected');
+        return;
+    }
+    
+    if (!confirm(`Delete ${postIds.length} selected post${postIds.length !== 1 ? 's' : ''}? This cannot be undone.`)) {
+        return;
+    }
+    
+    const formData = new FormData();
+    postIds.forEach(id => formData.append('post_ids', id));
+    
+    fetch('/social/bulk-delete', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Remove deleted posts from DOM
+            postIds.forEach(postId => {
+                const postItem = document.querySelector(`.post-item[data-post-id="${postId}"]`);
+                if (postItem) {
+                    const card = postItem.closest('.social-copy-card');
+                    const allPosts = card.querySelectorAll('.post-item');
+                    
+                    if (allPosts.length === 1) {
+                        card.remove();
+                    } else {
+                        postItem.remove();
+                    }
+                }
+            });
+            
+            // Update remaining post numbers and counts
+            document.querySelectorAll('.social-copy-card').forEach(card => {
+                const remainingPosts = card.querySelectorAll('.post-item');
+                if (remainingPosts.length === 0) {
+                    card.remove();
+                } else {
+                    remainingPosts.forEach((p, i) => {
+                        const badge = p.querySelector('.badge.bg-secondary');
+                        if (badge) badge.textContent = `Post ${i + 1}`;
+                        p.classList.remove('mt-3', 'pt-3', 'border-top');
+                        if (i > 0) p.classList.add('mt-3', 'pt-3', 'border-top');
+                    });
+                    const countBadge = card.querySelector('.social-copy-header .badge');
+                    if (countBadge) {
+                        countBadge.textContent = `${remainingPosts.length} post${remainingPosts.length !== 1 ? 's' : ''}`;
+                    }
+                }
+            });
+            
+            // Check if any posts remain
+            const container = document.getElementById('saved-posts-container');
+            if (container && container.children.length === 0) {
+                document.getElementById('saved-posts-section').remove();
+            }
+            
+            // Exit select mode
+            toggleSelectMode();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to delete posts'));
         }
     })
     .catch(error => {

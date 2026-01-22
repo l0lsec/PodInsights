@@ -1108,9 +1108,12 @@ def generate_article_social(article_id: int):
     if not platforms:
         platforms = ["twitter", "linkedin", "facebook", "threads", "bluesky"]
     
-    # Get number of posts per platform (default to 1, max 10)
+    # Get number of posts per platform (default to 1, max 21)
     posts_per_platform = request.form.get('posts_per_platform', 1, type=int)
-    posts_per_platform = max(1, min(posts_per_platform, 10))
+    posts_per_platform = max(1, min(posts_per_platform, 21))
+    
+    # Get optional extra context for the prompt
+    extra_context = request.form.get('extra_context', '').strip() or None
     
     try:
         social_copy = generate_social_copy(
@@ -1118,6 +1121,7 @@ def generate_article_social(article_id: int):
             article_topic=article['topic'],
             platforms=platforms,
             posts_per_platform=posts_per_platform,
+            extra_context=extra_context,
         )
         
         # Save generated posts to database

@@ -290,6 +290,7 @@ def generate_social_copy(
     article_topic: str,
     platforms: List[str] | None = None,
     posts_per_platform: int = 1,
+    extra_context: str | None = None,
 ) -> dict:
     """Generate social media promotional copy with hashtags for different platforms.
 
@@ -303,6 +304,8 @@ def generate_social_copy(
         List of platforms to generate copy for. Defaults to all major platforms.
     posts_per_platform: int
         Number of unique posts to generate per platform. Defaults to 1.
+    extra_context: str | None
+        Optional additional context or instructions for generating posts.
 
     Returns
     -------
@@ -314,7 +317,7 @@ def generate_social_copy(
         platforms = ["twitter", "linkedin", "facebook", "threads", "bluesky"]
     
     # Clamp posts_per_platform to reasonable range
-    posts_per_platform = max(1, min(posts_per_platform, 10))
+    posts_per_platform = max(1, min(posts_per_platform, 21))
 
     try:
         from openai import OpenAI
@@ -376,7 +379,8 @@ def generate_social_copy(
                         f"Generate promotional social media copy for the following article:\n\n"
                         f"TOPIC: {article_topic}\n\n"
                         f"ARTICLE EXCERPT:\n{article_content[:3000]}\n\n"
-                        f"Create platform-specific promotional posts for each of these platforms:\n{platform_list}\n\n"
+                        + (f"ADDITIONAL CONTEXT/INSTRUCTIONS:\n{extra_context}\n\n" if extra_context else "")
+                        + f"Create platform-specific promotional posts for each of these platforms:\n{platform_list}\n\n"
                         "For each post:\n"
                         "1. Write copy optimized for that platform's audience and format\n"
                         "2. Include relevant hashtags (tech, cybersecurity, privacy focused)\n"
