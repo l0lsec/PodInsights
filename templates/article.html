@@ -55,6 +55,14 @@
                 📄 Copy Plain Text
             </button>
             <hr>
+            <!-- LinkedIn Publishing -->
+            <button class="btn btn-sm w-100 mb-2 linkedin-article-btn" id="publish-linkedin-btn" onclick="openArticlePostModal()" style="background: linear-gradient(135deg, #0077B5 0%, #005885 100%); color: white; border: none;" disabled>
+                💼 Publish to LinkedIn
+            </button>
+            <button class="btn btn-outline-success btn-sm w-100 mb-2 linkedin-article-btn" id="schedule-linkedin-btn" onclick="openScheduleModal({{ article.id }}, 'article')" disabled>
+                📅 Schedule Article
+            </button>
+            <hr>
             <a href="{{ url_for('edit_article', article_id=article.id) }}" class="btn btn-outline-primary btn-sm w-100 mb-2">
                 ✏️ Edit Article
             </a>
@@ -807,7 +815,7 @@ function checkLinkedInStatus() {
                     </div>
                 `;
                 // Disable LinkedIn buttons
-                document.querySelectorAll('.linkedin-post-btn').forEach(btn => {
+                document.querySelectorAll('.linkedin-post-btn, .linkedin-article-btn').forEach(btn => {
                     btn.disabled = true;
                     btn.title = 'Configure LinkedIn first';
                 });
@@ -818,7 +826,7 @@ function checkLinkedInStatus() {
                     <div class="d-flex justify-content-between align-items-center w-100">
                         <small><strong>${data.display_name || 'LinkedIn User'}</strong></small>
                         <div>
-                            <button class="btn btn-sm btn-outline-light" onclick="openArticlePostModal()" title="Post article to LinkedIn">
+                            <button class="btn btn-sm btn-primary" onclick="openArticlePostModal()" title="Post article to LinkedIn">
                                 📝 Post Article
                             </button>
                             <button class="btn btn-sm btn-outline-danger ms-1" onclick="disconnectLinkedIn()">
@@ -832,6 +840,9 @@ function checkLinkedInStatus() {
                     btn.disabled = false;
                     btn.title = 'Post to LinkedIn Now';
                 });
+                document.querySelectorAll('.linkedin-article-btn').forEach(btn => {
+                    btn.disabled = false;
+                });
             } else if (data.configured) {
                 badge.className = 'badge bg-warning text-dark';
                 badge.textContent = 'Not Connected';
@@ -844,7 +855,7 @@ function checkLinkedInStatus() {
                     </div>
                 `;
                 // Disable LinkedIn buttons
-                document.querySelectorAll('.linkedin-post-btn').forEach(btn => {
+                document.querySelectorAll('.linkedin-post-btn, .linkedin-article-btn').forEach(btn => {
                     btn.disabled = true;
                     btn.title = 'Connect LinkedIn first';
                 });

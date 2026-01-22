@@ -1659,14 +1659,14 @@ def linkedin_post_article(article_id: int):
     
     try:
         if article_url:
-            # Post with article link
-            result = client.create_article_post(
+            # Post with article link - use smart post to fetch OG metadata and upload image
+            # Combine commentary with the URL for the smart post
+            post_text = f"{commentary}\n\n{article_url}"
+            result = client.create_smart_post(
                 access_token=token['access_token'],
                 author_urn=token['user_urn'],
-                commentary=commentary,
-                article_url=article_url,
-                article_title=article['topic'],
-                article_description=article['content'][:200] if article['content'] else None,
+                text=post_text,
+                article_title=article['topic'],  # Fallback title if OG fetch fails
             )
         else:
             # Post as text (use first 3000 chars of content as commentary)
