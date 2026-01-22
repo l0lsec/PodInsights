@@ -9,7 +9,7 @@ PodInsights is the ultimate podcast analysis tool for creators, researchers, and
 - **Action Item Extraction** - Never miss important tasks or follow-ups mentioned in podcast discussions
 - **Article Generation** - Transform podcast content into polished blog posts and articles on tech, privacy, and cybersecurity topics
 - **Social Media Content** - Auto-generate platform-optimized social media posts from your articles
-- **LinkedIn Integration** - Post articles and social content directly to LinkedIn with rich link previews
+- **LinkedIn Integration** - Post social media content directly to LinkedIn with rich link previews
 - **Post Scheduling** - Queue posts with configurable time slots for automated publishing
 - **JIRA Integration** - Seamlessly create tickets from extracted action items for project management
 - **RSS Feed Support** - Process entire podcast feeds directly from their source
@@ -250,7 +250,7 @@ The web interface also provides a **Status** page listing all queued and process
 
 ### Posting to LinkedIn
 
-Share your generated articles and social media content directly to LinkedIn with rich link previews. The integration supports both immediate posting and scheduled publishing.
+Share your generated social media content directly to LinkedIn with rich link previews. The integration supports both immediate posting and scheduled publishing.
 
 #### Setting Up LinkedIn Integration
 
@@ -271,9 +271,9 @@ Share your generated articles and social media content directly to LinkedIn with
 #### Posting Content
 
 From any article page, you can:
-- **Post Social Media Copy** - Click "Post to LinkedIn" next to any generated social post
-- **Post Article** - Share the full article with a custom introduction
+- **Post Social Media Copy** - Click "Post to LinkedIn" (💼) next to any generated LinkedIn social post
 - **Add to Queue** - Click the ➕ button to schedule a post for the next available time slot
+- **Schedule for Specific Time** - Click the 📅 button to pick a custom date/time
 
 Posts containing URLs automatically include rich link previews with:
 - Title extracted from the linked page's Open Graph metadata
