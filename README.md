@@ -8,6 +8,9 @@ PodInsights is the ultimate podcast analysis tool for creators, researchers, and
 - **Intelligent Summarization** - Automatically generate concise summaries capturing the core message of any episode
 - **Action Item Extraction** - Never miss important tasks or follow-ups mentioned in podcast discussions
 - **Article Generation** - Transform podcast content into polished blog posts and articles on tech, privacy, and cybersecurity topics
+- **Social Media Content** - Auto-generate platform-optimized social media posts from your articles
+- **LinkedIn Integration** - Post articles and social content directly to LinkedIn with rich link previews
+- **Post Scheduling** - Queue posts with configurable time slots for automated publishing
 - **JIRA Integration** - Seamlessly create tickets from extracted action items for project management
 - **RSS Feed Support** - Process entire podcast feeds directly from their source
 
@@ -18,6 +21,7 @@ PodInsights is the ultimate podcast analysis tool for creators, researchers, and
 - Business professionals extracting action items from recorded meetings
 - Podcast fans who want to quickly understand episode content before listening
 - Knowledge workers converting audio information into structured text data
+- Marketing teams scheduling social media content from podcast insights
 
 *PodInsights - Transforming podcast content into actionable intelligence.*
 
@@ -154,9 +158,16 @@ The following environment variables control authentication, model selection, and
 - **`JIRA_API_TOKEN`**: Your JIRA API token.
 - **`JIRA_PROJECT_KEY`**: The project key where new issues should be created.
 
+### Required for LinkedIn Integration (Web UI)
+
+- **`LINKEDIN_CLIENT_ID`**: Your LinkedIn app's Client ID from the [LinkedIn Developer Portal](https://www.linkedin.com/developers/).
+- **`LINKEDIN_CLIENT_SECRET`**: Your LinkedIn app's Client Secret.
+- **`LINKEDIN_REDIRECT_URI`**: The OAuth callback URL (default: `http://localhost:5001/linkedin/callback`). Must match the redirect URI configured in your LinkedIn app.
+
 ### Optional for Web UI
 
 - **`PORT`**: The port for the Flask web server (default: `5001`). Set this if you want the web UI to run on a different port.
+- **`LINKEDIN_SCOPES`**: OAuth scopes for LinkedIn (default: `openid profile w_member_social`). Only change if you have specific scope requirements.
 
 ## Usage (CLI)
 
@@ -236,6 +247,53 @@ or the list of tickets on an episode's results page, so you can quickly see
 whether items are still open or have been resolved.
 
 The web interface also provides a **Status** page listing all queued and processed episodes from every feed. Use the **Queue** link next to an episode to process it in the background and track its progress on the Status page.
+
+### Posting to LinkedIn
+
+Share your generated articles and social media content directly to LinkedIn with rich link previews. The integration supports both immediate posting and scheduled publishing.
+
+#### Setting Up LinkedIn Integration
+
+1. **Create a LinkedIn App** at the [LinkedIn Developer Portal](https://www.linkedin.com/developers/apps)
+2. **Add the required products** to your app:
+   - "Share on LinkedIn" - enables posting (provides `w_member_social` scope)
+   - "Sign In with LinkedIn using OpenID Connect" - enables user identification (provides `openid`, `profile` scopes)
+3. **Configure the OAuth redirect URL** in your app settings:
+   - Add `http://localhost:5001/linkedin/callback` (or your custom domain)
+4. **Set environment variables**:
+   ```bash
+   export LINKEDIN_CLIENT_ID="your-client-id"
+   export LINKEDIN_CLIENT_SECRET="your-client-secret"
+   export LINKEDIN_REDIRECT_URI="http://localhost:5001/linkedin/callback"
+   ```
+5. **Connect your account** by clicking "Connect LinkedIn" on any article page
+
+#### Posting Content
+
+From any article page, you can:
+- **Post Social Media Copy** - Click "Post to LinkedIn" next to any generated social post
+- **Post Article** - Share the full article with a custom introduction
+- **Add to Queue** - Click the ➕ button to schedule a post for the next available time slot
+
+Posts containing URLs automatically include rich link previews with:
+- Title extracted from the linked page's Open Graph metadata
+- Description from the page
+- Thumbnail image uploaded to LinkedIn
+
+#### Scheduling Posts
+
+Use the **Schedule** page to manage your posting queue and configure automated publishing:
+
+1. **Configure Time Slots** - Set up recurring posting times:
+   - Add daily slots (e.g., "Post every day at 9:00 AM")
+   - Add day-specific slots (e.g., "Post on Mondays at 2:00 PM")
+   - Enable/disable slots as needed
+
+2. **Queue Posts** - From article pages, click the ➕ button to add posts to the queue. They'll automatically be assigned to the next available time slot.
+
+3. **Manage Scheduled Posts** - View, edit, or cancel pending posts from the Schedule page
+
+The background worker automatically publishes scheduled posts when their time arrives.
 
 ## Credits
 

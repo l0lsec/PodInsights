@@ -5,7 +5,7 @@ import os
 import tempfile
 import threading
 from queue import Queue
-from flask import Flask, request, render_template, redirect, url_for
+from flask import Flask, request, render_template, redirect, url_for, session, jsonify
 import re
 import feedparser
 import requests
@@ -46,6 +46,29 @@ from database import (
     delete_social_posts_for_article,
     mark_social_post_used,
     update_social_post,
+    # LinkedIn token functions
+    save_linkedin_token,
+    get_linkedin_token,
+    delete_linkedin_token,
+    update_linkedin_token,
+    # Scheduled posts functions
+    add_scheduled_post,
+    get_scheduled_post,
+    list_scheduled_posts,
+    get_pending_scheduled_posts,
+    update_scheduled_post_status,
+    update_scheduled_post_time,
+    cancel_scheduled_post,
+    delete_scheduled_post,
+    get_scheduled_posts_for_article,
+    # Time slot functions for queue-based scheduling
+    add_time_slot,
+    list_time_slots,
+    get_enabled_time_slots,
+    update_time_slot,
+    delete_time_slot,
+    get_next_available_slot,
+    initialize_default_time_slots,
 )
 from podinsights import (
     transcribe_audio,
@@ -57,8 +80,15 @@ from podinsights import (
     generate_social_copy,
     refine_article,
 )
+from linkedin_client import (
+    LinkedInClient,
+    get_linkedin_client,
+    calculate_token_expiry,
+    is_token_expired,
+)
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
 configure_logging()
 init_db()
 
@@ -1314,6 +1344,772 @@ def view_articles():
         all_styles=sorted(all_styles),
         all_podcasts=sorted(all_podcasts),
     )
+
+
+# ============================================================================
+# LinkedIn Integration Routes
+# ============================================================================
+
+
+@app.route('/linkedin/status')
+def linkedin_status():
+    """Check LinkedIn connection status."""
+    client = get_linkedin_client()
+    token = get_linkedin_token()
+    
+    if not client.is_configured():
+        return jsonify({
+            "connected": False,
+            "configured": False,
+            "message": "LinkedIn credentials not configured. Set LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET.",
+        })
+    
+    if not token:
+        return jsonify({
+            "connected": False,
+            "configured": True,
+            "message": "Not connected to LinkedIn",
+        })
+    
+    # Check if token is expired
+    if is_token_expired(token['expires_at']):
+        # Try to refresh if we have a refresh token
+        if token['refresh_token']:
+            try:
+                new_token = client.refresh_access_token(token['refresh_token'])
+                expires_at = calculate_token_expiry(new_token.get('expires_in', 5184000))
+                update_linkedin_token(
+                    access_token=new_token['access_token'],
+                    expires_at=expires_at,
+                    refresh_token=new_token.get('refresh_token'),
+                )
+                return jsonify({
+                    "connected": True,
+                    "configured": True,
+                    "display_name": token['display_name'],
+                    "email": token['email'],
+                    "message": "Connected (token refreshed)",
+                })
+            except Exception as e:
+                app.logger.warning("Failed to refresh LinkedIn token: %s", e)
+                return jsonify({
+                    "connected": False,
+                    "configured": True,
+                    "message": "Token expired. Please reconnect.",
+                })
+        else:
+            return jsonify({
+                "connected": False,
+                "configured": True,
+                "message": "Token expired. Please reconnect.",
+            })
+    
+    # Check if user_urn is configured (needed for posting)
+    needs_configuration = not token['user_urn']
+    
+    return jsonify({
+        "connected": True,
+        "configured": True,
+        "needs_configuration": needs_configuration,
+        "display_name": token['display_name'],
+        "email": token['email'],
+        "user_urn": token['user_urn'],
+        "configure_url": url_for('linkedin_configure') if needs_configuration else None,
+    })
+
+
+@app.route('/linkedin/auth')
+def linkedin_auth():
+    """Start LinkedIn OAuth flow."""
+    client = get_linkedin_client()
+    
+    if not client.is_configured():
+        return jsonify({"error": "LinkedIn not configured"}), 400
+    
+    auth_url, state = client.get_authorization_url()
+    session['linkedin_oauth_state'] = state
+    
+    return redirect(auth_url)
+
+
+@app.route('/linkedin/callback')
+def linkedin_callback():
+    """Handle LinkedIn OAuth callback."""
+    error = request.args.get('error')
+    if error:
+        error_desc = request.args.get('error_description', 'Unknown error')
+        app.logger.error("LinkedIn OAuth error: %s - %s", error, error_desc)
+        return render_template(
+            'article_error.html',
+            error=f"LinkedIn authorization failed: {error_desc}",
+        )
+    
+    code = request.args.get('code')
+    state = request.args.get('state')
+    
+    # Verify state to prevent CSRF
+    stored_state = session.pop('linkedin_oauth_state', None)
+    if not stored_state or stored_state != state:
+        app.logger.warning("LinkedIn OAuth state mismatch")
+        return render_template(
+            'article_error.html',
+            error="Security verification failed. Please try again.",
+        )
+    
+    if not code:
+        return render_template(
+            'article_error.html',
+            error="No authorization code received from LinkedIn.",
+        )
+    
+    client = get_linkedin_client()
+    
+    try:
+        # Exchange code for token
+        token_data = client.exchange_code_for_token(code)
+        access_token = token_data['access_token']
+        expires_in = token_data.get('expires_in', 5184000)  # Default 60 days
+        refresh_token = token_data.get('refresh_token')
+        
+        # Calculate expiry
+        expires_at = calculate_token_expiry(expires_in)
+        
+        # Try to get user info - may return None if only w_member_social scope
+        user_info = client.get_user_info(access_token)
+        
+        if user_info:
+            member_id = user_info.get('sub') or user_info.get('id', '')
+            user_urn = f"urn:li:person:{member_id}" if member_id else ''
+            display_name = user_info.get('name', '') or user_info.get('localizedFirstName', 'LinkedIn User')
+            email = user_info.get('email', '')
+        else:
+            # Profile endpoints didn't work - user needs to manually configure
+            member_id = ''
+            user_urn = ''
+            display_name = 'LinkedIn User (needs configuration)'
+            email = ''
+        
+        # Save token (with or without profile info)
+        save_linkedin_token(
+            access_token=access_token,
+            expires_at=expires_at,
+            member_id=member_id,
+            user_urn=user_urn,
+            display_name=display_name,
+            email=email,
+            refresh_token=refresh_token,
+        )
+        
+        app.logger.info("LinkedIn connected for user: %s", display_name)
+        
+        # If we couldn't get profile info, redirect to configuration page
+        if not user_urn:
+            return redirect(url_for('linkedin_configure') + '?new=1')
+        
+        # Redirect to articles page with success message
+        return redirect(url_for('view_articles') + '?linkedin=connected')
+        
+    except Exception as e:
+        app.logger.exception("LinkedIn OAuth exchange failed")
+        return render_template(
+            'article_error.html',
+            error=f"Failed to connect to LinkedIn: {str(e)}",
+        )
+
+
+@app.route('/linkedin/disconnect', methods=['POST'])
+def linkedin_disconnect():
+    """Disconnect LinkedIn account."""
+    delete_linkedin_token()
+    return jsonify({"success": True, "message": "LinkedIn disconnected"})
+
+
+@app.route('/linkedin/configure', methods=['GET', 'POST'])
+def linkedin_configure():
+    """Configure LinkedIn member ID manually.
+    
+    This is needed when the user only has 'Share on LinkedIn' product
+    which doesn't provide profile access scopes.
+    """
+    from database import update_linkedin_member_urn
+    
+    token = get_linkedin_token()
+    if not token:
+        return redirect(url_for('view_schedule') + '?error=not_connected')
+    
+    if request.method == 'POST':
+        member_id = request.form.get('member_id', '').strip()
+        display_name = request.form.get('display_name', '').strip() or 'LinkedIn User'
+        
+        if not member_id:
+            return render_template(
+                'linkedin_configure.html',
+                token=token,
+                error="Member ID is required",
+                is_new=request.args.get('new') == '1',
+            )
+        
+        # Update the token with the manual member ID
+        success = update_linkedin_member_urn(
+            member_id=member_id,
+            display_name=display_name,
+        )
+        
+        if success:
+            app.logger.info("LinkedIn member ID configured manually: %s", member_id)
+            return redirect(url_for('view_schedule') + '?linkedin=configured')
+        else:
+            return render_template(
+                'linkedin_configure.html',
+                token=token,
+                error="Failed to save configuration",
+                is_new=request.args.get('new') == '1',
+            )
+    
+    # GET request - show configuration form
+    return render_template(
+        'linkedin_configure.html',
+        token=token,
+        is_new=request.args.get('new') == '1',
+    )
+
+
+@app.route('/linkedin/post/<int:post_id>', methods=['POST'])
+def linkedin_post_social(post_id: int):
+    """Post a social media post to LinkedIn immediately."""
+    post = get_social_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    token = get_linkedin_token()
+    if not token:
+        return jsonify({"error": "LinkedIn not connected"}), 401
+    
+    if is_token_expired(token['expires_at']):
+        return jsonify({"error": "LinkedIn token expired. Please reconnect."}), 401
+    
+    if not token['user_urn']:
+        return jsonify({
+            "error": "LinkedIn needs configuration. Please configure your Member ID.",
+            "configure_url": url_for('linkedin_configure')
+        }), 400
+    
+    client = get_linkedin_client()
+    
+    try:
+        # Use smart post to automatically detect URLs and show link previews
+        # Pass the article topic as fallback title for link previews
+        article_topic = post['article_topic'] if 'article_topic' in post.keys() else None
+        result = client.create_smart_post(
+            access_token=token['access_token'],
+            author_urn=token['user_urn'],
+            text=post['content'],
+            article_title=article_topic,
+        )
+        
+        if result['success']:
+            # Mark the post as used
+            mark_social_post_used(post_id, True)
+            return jsonify({
+                "success": True,
+                "post_urn": result['post_urn'],
+                "message": "Posted to LinkedIn successfully!",
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": result.get('error', 'Unknown error'),
+            }), 400
+            
+    except Exception as e:
+        app.logger.exception("Failed to post to LinkedIn")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/linkedin/post-article/<int:article_id>', methods=['POST'])
+def linkedin_post_article(article_id: int):
+    """Post an article to LinkedIn with a link."""
+    article = get_article(article_id)
+    if not article:
+        return jsonify({"error": "Article not found"}), 404
+    
+    token = get_linkedin_token()
+    if not token:
+        return jsonify({"error": "LinkedIn not connected"}), 401
+    
+    if is_token_expired(token['expires_at']):
+        return jsonify({"error": "LinkedIn token expired. Please reconnect."}), 401
+    
+    if not token['user_urn']:
+        return jsonify({
+            "error": "LinkedIn needs configuration. Please configure your Member ID.",
+            "configure_url": url_for('linkedin_configure')
+        }), 400
+    
+    # Get commentary from request or generate default
+    commentary = request.form.get('commentary', '').strip()
+    if not commentary:
+        commentary = f"Check out my latest article: {article['topic']}"
+    
+    # Get article URL - this would typically be a public URL where the article is hosted
+    # For now, we'll just post the text with a mention of the topic
+    article_url = request.form.get('article_url', '').strip()
+    
+    client = get_linkedin_client()
+    
+    try:
+        if article_url:
+            # Post with article link
+            result = client.create_article_post(
+                access_token=token['access_token'],
+                author_urn=token['user_urn'],
+                commentary=commentary,
+                article_url=article_url,
+                article_title=article['topic'],
+                article_description=article['content'][:200] if article['content'] else None,
+            )
+        else:
+            # Post as text (use first 3000 chars of content as commentary)
+            full_text = f"{commentary}\n\n{article['content'][:2800]}" if article['content'] else commentary
+            result = client.create_text_post(
+                access_token=token['access_token'],
+                author_urn=token['user_urn'],
+                text=full_text[:3000],  # LinkedIn text limit
+            )
+        
+        if result['success']:
+            return jsonify({
+                "success": True,
+                "post_urn": result['post_urn'],
+                "message": "Article posted to LinkedIn successfully!",
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": result.get('error', 'Unknown error'),
+            }), 400
+            
+    except Exception as e:
+        app.logger.exception("Failed to post article to LinkedIn")
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================================
+# Scheduled Posts Routes
+# ============================================================================
+
+
+@app.route('/schedule/add', methods=['POST'])
+def schedule_add():
+    """Add a post to the schedule queue."""
+    post_type = request.form.get('post_type')  # 'social' or 'article'
+    scheduled_for = request.form.get('scheduled_for')  # ISO datetime (optional if using queue)
+    social_post_id = request.form.get('social_post_id', type=int)
+    article_id = request.form.get('article_id', type=int)
+    use_queue = request.form.get('use_queue') == '1'  # Auto-schedule to next available slot
+    
+    # If using queue, get the next available time slot
+    if use_queue or not scheduled_for:
+        scheduled_for = get_next_available_slot()
+        if not scheduled_for:
+            return jsonify({
+                "error": "No time slots configured. Please add posting times in the Schedule settings."
+            }), 400
+    
+    if post_type == 'social' and not social_post_id:
+        return jsonify({"error": "Social post ID is required"}), 400
+    
+    if post_type == 'article' and not article_id:
+        return jsonify({"error": "Article ID is required"}), 400
+    
+    # Verify the post/article exists
+    if social_post_id:
+        post = get_social_post(social_post_id)
+        if not post:
+            return jsonify({"error": "Social post not found"}), 404
+    
+    if article_id:
+        article = get_article(article_id)
+        if not article:
+            return jsonify({"error": "Article not found"}), 404
+    
+    try:
+        scheduled_id = add_scheduled_post(
+            scheduled_for=scheduled_for,
+            post_type=post_type,
+            social_post_id=social_post_id,
+            article_id=article_id,
+            platform='linkedin',
+        )
+        
+        # Format the display time
+        scheduled_for_display = scheduled_for
+        try:
+            dt = datetime.fromisoformat(scheduled_for)
+            scheduled_for_display = dt.strftime('%A, %B %d at %I:%M %p')
+        except (ValueError, TypeError):
+            pass
+        
+        return jsonify({
+            "success": True,
+            "scheduled_id": scheduled_id,
+            "scheduled_for": scheduled_for,
+            "scheduled_for_display": scheduled_for_display,
+            "message": f"Post scheduled for {scheduled_for_display}",
+        })
+        
+    except Exception as e:
+        app.logger.exception("Failed to schedule post")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/schedule')
+def schedule_list():
+    """View all scheduled posts."""
+    status_filter = request.args.get('status', '')
+    
+    # Initialize default time slots if none exist
+    initialize_default_time_slots()
+    
+    posts = list_scheduled_posts(status=status_filter if status_filter else None)
+    
+    # Convert to list of dicts and format dates
+    scheduled = []
+    for p in posts:
+        post_dict = dict(p)
+        # Parse scheduled_for for display
+        if post_dict.get('scheduled_for'):
+            try:
+                dt = datetime.fromisoformat(post_dict['scheduled_for'])
+                post_dict['scheduled_for_display'] = dt.strftime('%Y-%m-%d %H:%M')
+            except (ValueError, TypeError):
+                post_dict['scheduled_for_display'] = post_dict['scheduled_for']
+        scheduled.append(post_dict)
+    
+    # Check LinkedIn connection status
+    token = get_linkedin_token()
+    linkedin_connected = token is not None and not is_token_expired(token['expires_at']) if token else False
+    
+    # Get configured time slots
+    time_slots = list_time_slots()
+    time_slots_list = []
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    for slot in time_slots:
+        slot_dict = dict(slot)
+        if slot_dict['day_of_week'] == -1:
+            slot_dict['day_display'] = 'Every day'
+        else:
+            slot_dict['day_display'] = day_names[slot_dict['day_of_week']]
+        time_slots_list.append(slot_dict)
+    
+    # Get next available slot for display
+    next_slot = get_next_available_slot()
+    next_slot_display = None
+    if next_slot:
+        try:
+            dt = datetime.fromisoformat(next_slot)
+            next_slot_display = dt.strftime('%A, %B %d at %I:%M %p')
+        except (ValueError, TypeError):
+            next_slot_display = next_slot
+    
+    return render_template(
+        'schedule.html',
+        scheduled_posts=scheduled,
+        status_filter=status_filter,
+        linkedin_connected=linkedin_connected,
+        time_slots=time_slots_list,
+        next_slot=next_slot,
+        next_slot_display=next_slot_display,
+    )
+
+
+@app.route('/schedule/<int:scheduled_id>/cancel', methods=['POST'])
+def schedule_cancel(scheduled_id: int):
+    """Cancel a scheduled post."""
+    success = cancel_scheduled_post(scheduled_id)
+    
+    if success:
+        return jsonify({"success": True, "message": "Post cancelled"})
+    else:
+        return jsonify({"error": "Could not cancel post (may already be posted or cancelled)"}), 400
+
+
+@app.route('/schedule/<int:scheduled_id>/delete', methods=['POST'])
+def schedule_delete(scheduled_id: int):
+    """Delete a scheduled post."""
+    delete_scheduled_post(scheduled_id)
+    return jsonify({"success": True, "message": "Post deleted"})
+
+
+@app.route('/schedule/<int:scheduled_id>/edit', methods=['POST'])
+def schedule_edit(scheduled_id: int):
+    """Edit the scheduled time for a pending post."""
+    scheduled_for = request.form.get('scheduled_for', '').strip()
+    
+    if not scheduled_for:
+        return jsonify({"error": "Scheduled time is required"}), 400
+    
+    # Validate datetime format
+    try:
+        dt = datetime.fromisoformat(scheduled_for.replace('Z', '+00:00'))
+        # Ensure it's in the future
+        if dt <= datetime.utcnow():
+            return jsonify({"error": "Scheduled time must be in the future"}), 400
+        # Normalize to ISO format
+        scheduled_for = dt.isoformat(timespec="seconds")
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid datetime format"}), 400
+    
+    success = update_scheduled_post_time(scheduled_id, scheduled_for)
+    
+    if success:
+        # Format the display time
+        try:
+            display = dt.strftime('%A, %B %d at %I:%M %p')
+        except:
+            display = scheduled_for
+        
+        return jsonify({
+            "success": True,
+            "scheduled_for": scheduled_for,
+            "scheduled_for_display": display,
+            "message": f"Post rescheduled for {display}",
+        })
+    else:
+        return jsonify({
+            "error": "Could not update post (may not be pending or not found)"
+        }), 400
+
+
+# ============================================================================
+# Time Slot Management Routes
+# ============================================================================
+
+
+@app.route('/schedule/slots', methods=['GET'])
+def schedule_slots():
+    """Get all configured time slots."""
+    slots = list_time_slots()
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    
+    slots_list = []
+    for slot in slots:
+        slot_dict = dict(slot)
+        if slot_dict['day_of_week'] == -1:
+            slot_dict['day_display'] = 'Every day'
+        else:
+            slot_dict['day_display'] = day_names[slot_dict['day_of_week']]
+        slots_list.append(slot_dict)
+    
+    return jsonify({"slots": slots_list})
+
+
+@app.route('/schedule/slots/add', methods=['POST'])
+def schedule_slot_add():
+    """Add a new time slot."""
+    day_of_week = request.form.get('day_of_week', type=int, default=-1)
+    time_slot = request.form.get('time_slot', '').strip()
+    
+    if not time_slot:
+        return jsonify({"error": "Time is required"}), 400
+    
+    # Validate time format (HH:MM)
+    try:
+        hour, minute = map(int, time_slot.split(':'))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError()
+        time_slot = f"{hour:02d}:{minute:02d}"
+    except (ValueError, AttributeError):
+        return jsonify({"error": "Invalid time format. Use HH:MM (24-hour)"}), 400
+    
+    # Validate day_of_week
+    if day_of_week < -1 or day_of_week > 6:
+        return jsonify({"error": "Invalid day of week"}), 400
+    
+    slot_id = add_time_slot(
+        day_of_week=day_of_week,
+        time_slot=time_slot,
+        enabled=True,
+    )
+    
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    day_display = 'Every day' if day_of_week == -1 else day_names[day_of_week]
+    
+    return jsonify({
+        "success": True,
+        "slot": {
+            "id": slot_id,
+            "day_of_week": day_of_week,
+            "day_display": day_display,
+            "time_slot": time_slot,
+            "enabled": True,
+        }
+    })
+
+
+@app.route('/schedule/slots/<int:slot_id>/toggle', methods=['POST'])
+def schedule_slot_toggle(slot_id: int):
+    """Toggle a time slot's enabled state."""
+    slots = list_time_slots()
+    slot = next((s for s in slots if s['id'] == slot_id), None)
+    
+    if not slot:
+        return jsonify({"error": "Slot not found"}), 404
+    
+    new_enabled = not bool(slot['enabled'])
+    update_time_slot(slot_id, enabled=new_enabled)
+    
+    return jsonify({
+        "success": True,
+        "enabled": new_enabled,
+    })
+
+
+@app.route('/schedule/slots/<int:slot_id>/delete', methods=['POST'])
+def schedule_slot_delete(slot_id: int):
+    """Delete a time slot."""
+    delete_time_slot(slot_id)
+    return jsonify({"success": True, "message": "Slot deleted"})
+
+
+@app.route('/schedule/next-slot', methods=['GET'])
+def schedule_next_slot():
+    """Get the next available posting slot."""
+    next_slot = get_next_available_slot()
+    
+    if not next_slot:
+        return jsonify({
+            "available": False,
+            "message": "No time slots configured",
+        })
+    
+    try:
+        dt = datetime.fromisoformat(next_slot)
+        display = dt.strftime('%A, %B %d at %I:%M %p')
+    except (ValueError, TypeError):
+        display = next_slot
+    
+    return jsonify({
+        "available": True,
+        "scheduled_for": next_slot,
+        "display": display,
+    })
+
+
+# ============================================================================
+# Background Scheduler Worker
+# ============================================================================
+
+
+def scheduled_post_worker() -> None:
+    """Background thread that processes scheduled posts."""
+    import time as time_module
+    
+    while True:
+        try:
+            # Check for pending posts every 60 seconds
+            time_module.sleep(60)
+            
+            # Get pending posts that are due
+            pending = get_pending_scheduled_posts()
+            
+            if not pending:
+                continue
+            
+            # Get LinkedIn token
+            token = get_linkedin_token()
+            if not token:
+                app.logger.warning("Scheduled posts due but LinkedIn not connected")
+                continue
+            
+            if is_token_expired(token['expires_at']):
+                # Try to refresh
+                client = get_linkedin_client()
+                if token['refresh_token']:
+                    try:
+                        new_token = client.refresh_access_token(token['refresh_token'])
+                        expires_at = calculate_token_expiry(new_token.get('expires_in', 5184000))
+                        update_linkedin_token(
+                            access_token=new_token['access_token'],
+                            expires_at=expires_at,
+                            refresh_token=new_token.get('refresh_token'),
+                        )
+                        token = get_linkedin_token()
+                    except Exception as e:
+                        app.logger.error("Failed to refresh token for scheduled posts: %s", e)
+                        continue
+                else:
+                    app.logger.warning("LinkedIn token expired, cannot process scheduled posts")
+                    continue
+            
+            client = get_linkedin_client()
+            
+            for post in pending:
+                try:
+                    # Get article topic safely from sqlite3.Row
+                    article_topic = post['article_topic'] if 'article_topic' in post.keys() else None
+                    
+                    if post['post_type'] == 'social' and post['social_content']:
+                        # Use smart post to auto-detect URLs for link previews
+                        # Pass the article topic as fallback title for rich link previews
+                        result = client.create_smart_post(
+                            access_token=token['access_token'],
+                            author_urn=token['user_urn'],
+                            text=post['social_content'],
+                            article_title=article_topic,
+                        )
+                    elif post['post_type'] == 'article' and post['article_content']:
+                        # Post article as text with smart URL detection
+                        text = f"{post['article_topic']}\n\n{post['article_content'][:2800]}"
+                        result = client.create_smart_post(
+                            access_token=token['access_token'],
+                            author_urn=token['user_urn'],
+                            text=text[:3000],
+                            article_title=article_topic,
+                        )
+                    else:
+                        app.logger.warning("Scheduled post %d has no content", post['id'])
+                        update_scheduled_post_status(
+                            post['id'],
+                            status='failed',
+                            error_message='No content found',
+                        )
+                        continue
+                    
+                    if result['success']:
+                        update_scheduled_post_status(
+                            post['id'],
+                            status='posted',
+                            linkedin_post_urn=result.get('post_urn'),
+                        )
+                        # Mark social post as used if applicable
+                        if post['social_post_id']:
+                            mark_social_post_used(post['social_post_id'], True)
+                        app.logger.info("Scheduled post %d published successfully", post['id'])
+                    else:
+                        error_msg = str(result.get('error', 'Unknown error'))[:500]
+                        update_scheduled_post_status(
+                            post['id'],
+                            status='failed',
+                            error_message=error_msg,
+                        )
+                        app.logger.error("Scheduled post %d failed: %s", post['id'], error_msg)
+                        
+                except Exception as e:
+                    app.logger.exception("Error processing scheduled post %d", post['id'])
+                    update_scheduled_post_status(
+                        post['id'],
+                        status='failed',
+                        error_message=str(e)[:500],
+                    )
+                    
+        except Exception as e:
+            app.logger.exception("Error in scheduled post worker")
+
+
+# Start the scheduled post worker thread
+scheduled_worker_thread = threading.Thread(target=scheduled_post_worker, daemon=True)
+scheduled_worker_thread.start()
 
 
 if __name__ == '__main__':
