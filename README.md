@@ -1,4 +1,14 @@
-**PodInsights: AI-Powered Podcast Transcription, Summarization & Action Item Extraction Tool**
+<p align="center">
+  <img src="static/logo.png" alt="PodInsights Logo" width="200">
+</p>
+
+<h1 align="center">PodInsights</h1>
+
+<p align="center">
+  <strong>AI-Powered Podcast Transcription, Summarization & Action Item Extraction Tool</strong>
+</p>
+
+---
 
 PodInsights is the ultimate podcast analysis tool for creators, researchers, and business professionals who need to extract valuable insights from audio content. Our tool combines state-of-the-art speech recognition with powerful AI summarization to transform hours of podcast content into actionable intelligence.
 
