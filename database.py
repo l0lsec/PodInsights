@@ -176,6 +176,15 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
+        # Platform daily posting limits
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS platform_daily_limits (
+                platform TEXT PRIMARY KEY,
+                max_posts_per_day INTEGER DEFAULT 0
+            )
+            """
+        )
         # Upgrade any existing DB with newer columns
         cur = conn.execute("PRAGMA table_info(episodes)")
         columns = [row[1] for row in cur.fetchall()]
@@ -1048,29 +1057,46 @@ def add_scheduled_post(
     social_post_id: int | None = None,
     article_id: int | None = None,
     platform: str = "linkedin",
+    status: str = "pending",
+    linkedin_post_urn: str | None = None,
     db_path: str = DB_PATH,
 ) -> int:
     """Add a post to the schedule queue. Returns the scheduled post id."""
     created_at = datetime.utcnow().isoformat(timespec="seconds")
+    posted_at = created_at if status == "posted" else None
     with sqlite3.connect(db_path) as conn:
         cur = conn.execute(
             """
             INSERT INTO scheduled_posts
                 (social_post_id, article_id, post_type, platform, scheduled_for,
-                 status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                 status, linkedin_post_urn, created_at, posted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (social_post_id, article_id, post_type, platform, scheduled_for, created_at),
+            (social_post_id, article_id, post_type, platform, scheduled_for, 
+             status, linkedin_post_urn, created_at, posted_at),
         )
         conn.commit()
         return cur.lastrowid
 
 
 def get_scheduled_post(scheduled_id: int, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
-    """Get a single scheduled post by id."""
+    """Get a single scheduled post by id with joined content data."""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        cur = conn.execute("SELECT * FROM scheduled_posts WHERE id = ?", (scheduled_id,))
+        cur = conn.execute(
+            """
+            SELECT sp.*, 
+                   soc.content AS social_content, soc.platform AS social_platform,
+                   a.topic AS article_topic, a.content AS article_content,
+                   a.episode_id
+            FROM scheduled_posts sp
+            LEFT JOIN social_posts soc ON sp.social_post_id = soc.id
+            LEFT JOIN articles a ON sp.article_id = a.id
+            WHERE sp.id = ?
+            """,
+            (scheduled_id,),
+        )
+        return cur.fetchone()
 
 
 def get_pending_schedules_for_social_posts(social_post_ids: List[int], db_path: str = DB_PATH) -> dict:
@@ -1181,6 +1207,68 @@ def update_scheduled_post_time(
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def redistribute_scheduled_posts(platform: str, db_path: str = DB_PATH) -> int:
+    """Redistribute all pending posts for a platform to use the earliest available slots.
+    
+    This should be called when:
+    - A time slot is added, deleted, or toggled
+    - Daily posting limits are changed
+    
+    The function clears all existing scheduled times for pending posts of the platform,
+    then reassigns them in order using get_next_available_slot().
+    
+    Args:
+        platform: The platform to redistribute ('linkedin' or 'threads')
+        db_path: Database path
+        
+    Returns:
+        Number of posts redistributed
+    """
+    from datetime import datetime
+    
+    # Get all pending posts for this platform, ordered by their creation time
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            """
+            SELECT id FROM scheduled_posts
+            WHERE platform = ? AND status = 'pending'
+            ORDER BY created_at ASC
+            """,
+            (platform,),
+        )
+        pending_posts = [row['id'] for row in cur.fetchall()]
+    
+    if not pending_posts:
+        return 0
+    
+    # Clear all scheduled times first (set to far future temporarily)
+    # This ensures get_next_available_slot doesn't see conflicts
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE scheduled_posts
+            SET scheduled_for = '9999-12-31T23:59:59'
+            WHERE platform = ? AND status = 'pending'
+            """,
+            (platform,),
+        )
+        conn.commit()
+    
+    # Reassign each post to the next available slot
+    redistributed = 0
+    for post_id in pending_posts:
+        next_slot = get_next_available_slot(platform, db_path)
+        if next_slot:
+            update_scheduled_post_time(post_id, next_slot, db_path)
+            redistributed += 1
+        else:
+            # No more slots available, leave at far future (will need manual intervention)
+            pass
+    
+    return redistributed
 
 
 def update_scheduled_post_status(
@@ -1374,6 +1462,9 @@ def get_next_available_slot(platform: str = "linkedin", db_path: str = DB_PATH) 
     Each platform has its own queue, so a LinkedIn post and a Threads post
     can be scheduled for the same time slot without conflict.
     
+    Also respects daily posting limits - if a platform has a max posts per day
+    limit set, days that have reached that limit will be skipped.
+    
     Args:
         platform: The platform to check slots for (e.g., 'linkedin', 'threads')
         db_path: Database path
@@ -1393,6 +1484,9 @@ def get_next_available_slot(platform: str = "linkedin", db_path: str = DB_PATH) 
     if not slots:
         return None
     
+    # Get daily limit for this platform (0 = unlimited)
+    daily_limit = get_daily_limit(platform, db_path)
+    
     # Get existing pending posts for THIS PLATFORM ONLY to check for conflicts
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1407,10 +1501,26 @@ def get_next_available_slot(platform: str = "linkedin", db_path: str = DB_PATH) 
     
     # Use local time since time slots are configured in local time
     now = datetime.now()
+    
+    # Cache for daily post counts to avoid repeated DB queries
+    daily_counts_cache = {}
+    
     # Look up to 30 days ahead
     for day_offset in range(30):
         check_date = now + timedelta(days=day_offset)
         current_day_of_week = check_date.weekday()  # 0=Monday, 6=Sunday
+        date_str = check_date.strftime('%Y-%m-%d')
+        
+        # Check daily limit if set
+        if daily_limit > 0:
+            if date_str not in daily_counts_cache:
+                daily_counts_cache[date_str] = count_scheduled_posts_for_day(
+                    platform, date_str, db_path
+                )
+            
+            # Skip this day if limit reached
+            if daily_counts_cache[date_str] >= daily_limit:
+                continue
         
         for slot in slots:
             slot_day = slot['day_of_week']
@@ -1439,6 +1549,9 @@ def get_next_available_slot(platform: str = "linkedin", db_path: str = DB_PATH) 
             # Check if this slot is already taken for THIS PLATFORM
             candidate_str = candidate.isoformat(timespec="seconds")
             if candidate_str not in existing_times:
+                # Update cache to account for this new post if we were to add it
+                if daily_limit > 0:
+                    daily_counts_cache[date_str] = daily_counts_cache.get(date_str, 0) + 1
                 return candidate_str
     
     return None
@@ -1461,3 +1574,73 @@ def initialize_default_time_slots(db_path: str = DB_PATH) -> None:
             enabled=True,
             db_path=db_path,
         )
+
+
+# =============================================================================
+# Platform Daily Limits Functions
+# =============================================================================
+
+
+def get_daily_limit(platform: str, db_path: str = DB_PATH) -> int:
+    """Get the max posts per day limit for a platform.
+    
+    Returns 0 if no limit is set (unlimited).
+    """
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            "SELECT max_posts_per_day FROM platform_daily_limits WHERE platform = ?",
+            (platform,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+
+def set_daily_limit(platform: str, max_posts_per_day: int, db_path: str = DB_PATH) -> None:
+    """Set the max posts per day limit for a platform.
+    
+    Set to 0 for unlimited posts.
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO platform_daily_limits (platform, max_posts_per_day)
+            VALUES (?, ?)
+            ON CONFLICT(platform) DO UPDATE SET max_posts_per_day = excluded.max_posts_per_day
+            """,
+            (platform, max_posts_per_day),
+        )
+        conn.commit()
+
+
+def get_all_daily_limits(db_path: str = DB_PATH) -> dict:
+    """Get all platform daily limits as a dictionary.
+    
+    Returns: {'linkedin': 3, 'threads': 10, ...}
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("SELECT platform, max_posts_per_day FROM platform_daily_limits")
+        return {row['platform']: row['max_posts_per_day'] for row in cur.fetchall()}
+
+
+def count_scheduled_posts_for_day(platform: str, date_str: str, db_path: str = DB_PATH) -> int:
+    """Count pending scheduled posts for a platform on a specific date.
+    
+    Args:
+        platform: The platform (e.g., 'linkedin', 'threads')
+        date_str: Date in YYYY-MM-DD format
+        
+    Returns:
+        Number of pending posts scheduled for that day
+    """
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            SELECT COUNT(*) FROM scheduled_posts
+            WHERE platform = ?
+            AND status = 'pending'
+            AND date(scheduled_for) = ?
+            """,
+            (platform, date_str),
+        )
+        return cur.fetchone()[0]

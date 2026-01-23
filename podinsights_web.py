@@ -9,7 +9,7 @@ from flask import Flask, request, render_template, redirect, url_for, session, j
 import re
 import feedparser
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 from html import unescape
 from bs4 import BeautifulSoup
@@ -79,6 +79,12 @@ from database import (
     delete_time_slot,
     get_next_available_slot,
     initialize_default_time_slots,
+    # Daily posting limits
+    get_daily_limit,
+    set_daily_limit,
+    get_all_daily_limits,
+    # Queue redistribution
+    redistribute_scheduled_posts,
 )
 from podinsights import (
     transcribe_audio,
@@ -145,9 +151,8 @@ def worker() -> None:
             task_queue.task_done()
 
 
-worker_thread = threading.Thread(target=worker, daemon=True)
-# Start the worker when the application imports
-worker_thread.start()
+# Worker thread will be started in main block to avoid duplicates in debug mode
+# (app.debug is False at import time, so we can't check it here)
 
 
 def strip_html(text: str) -> str:
@@ -1682,6 +1687,19 @@ def linkedin_post_social(post_id: int):
         if result['success']:
             # Mark the post as used
             mark_social_post_used(post_id, True)
+            
+            # Record in scheduled_posts for history tracking
+            now = datetime.now().isoformat(timespec='seconds')
+            add_scheduled_post(
+                social_post_id=post_id,
+                article_id=post['article_id'] if 'article_id' in post.keys() else None,
+                post_type='social',
+                platform='linkedin',
+                scheduled_for=now,
+                status='posted',
+                linkedin_post_urn=result.get('post_urn'),
+            )
+            
             return jsonify({
                 "success": True,
                 "post_urn": result['post_urn'],
@@ -1904,9 +1922,23 @@ def threads_post_social(post_id: int):
         if result['success']:
             # Mark the post as used
             mark_social_post_used(post_id, True)
+            
+            # Record in scheduled_posts for history tracking
+            now = datetime.now().isoformat(timespec='seconds')
+            add_scheduled_post(
+                social_post_id=post_id,
+                article_id=post['article_id'] if 'article_id' in post.keys() else None,
+                post_type='social',
+                platform='threads',
+                scheduled_for=now,
+                status='posted',
+                linkedin_post_urn=result.get('permalink'),  # Store permalink for view link
+            )
+            
             return jsonify({
                 "success": True,
                 "post_id": result.get('post_id'),
+                "permalink": result.get('permalink'),
                 "message": "Posted to Threads successfully!",
             })
         else:
@@ -2049,6 +2081,12 @@ def schedule_list():
     # For backwards compatibility
     next_slot_display = next_slots.get('linkedin')
     
+    # Get daily posting limits
+    daily_limits = get_all_daily_limits()
+    
+    # Get Threads username for constructing view URLs (kept for backward compatibility)
+    threads_username = threads_token['username'] if threads_token and 'username' in threads_token.keys() else None
+    
     return render_template(
         'schedule.html',
         scheduled_posts=scheduled,
@@ -2058,6 +2096,8 @@ def schedule_list():
         time_slots=time_slots_list,
         next_slot_display=next_slot_display,
         next_slots=next_slots,
+        daily_limits=daily_limits,
+        threads_username=threads_username,
     )
 
 
@@ -2077,6 +2117,168 @@ def schedule_delete(scheduled_id: int):
     """Delete a scheduled post."""
     delete_scheduled_post(scheduled_id)
     return jsonify({"success": True, "message": "Post deleted"})
+
+
+@app.route('/schedule/<int:scheduled_id>/post-now', methods=['POST'])
+def schedule_post_now(scheduled_id: int):
+    """Immediately post a pending scheduled post."""
+    post = get_scheduled_post(scheduled_id)
+    
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    if post['status'] != 'pending':
+        return jsonify({"error": "Only pending posts can be posted immediately"}), 400
+    
+    platform = post['platform'] if 'platform' in post.keys() else 'linkedin'
+    
+    # Get content
+    if post['post_type'] == 'social' and post['social_content']:
+        content = post['social_content']
+    elif post['post_type'] == 'article' and post['article_content']:
+        content = f"{post['article_topic']}\n\n{post['article_content'][:2800]}"
+    else:
+        return jsonify({"error": "No content found"}), 400
+    
+    # Get article topic for title
+    article_topic = post['article_topic'] if 'article_topic' in post.keys() else None
+    
+    try:
+        if platform == 'threads':
+            # Handle Threads posting
+            threads_token = get_threads_token()
+            if not threads_token:
+                return jsonify({"error": "Threads not connected"}), 400
+            
+            threads_client = get_threads_client()
+            result = threads_client.publish_text_post(
+                threads_token['access_token'],
+                content[:500],
+            )
+            
+            if result and result.get('success'):
+                update_scheduled_post_status(
+                    scheduled_id,
+                    status='posted',
+                    posted_at=datetime.now().isoformat(timespec='seconds'),
+                    linkedin_post_urn=result.get('permalink'),
+                )
+                if post['social_post_id']:
+                    mark_social_post_used(post['social_post_id'], True)
+                return jsonify({"success": True, "message": "Posted to Threads!"})
+            else:
+                error_msg = result.get('error', 'Unknown error') if result else 'No response'
+                return jsonify({"error": f"Failed: {error_msg}"}), 400
+        else:
+            # Handle LinkedIn posting
+            token = get_linkedin_token()
+            if not token:
+                return jsonify({"error": "LinkedIn not connected"}), 400
+            
+            client = get_linkedin_client()
+            result = client.create_smart_post(
+                token['access_token'],
+                token['user_urn'],
+                content[:3000],
+                article_title=article_topic,
+            )
+            
+            if result and result.get('success'):
+                update_scheduled_post_status(
+                    scheduled_id,
+                    status='posted',
+                    posted_at=datetime.now().isoformat(timespec='seconds'),
+                    linkedin_post_urn=result.get('post_urn'),
+                )
+                if post['social_post_id']:
+                    mark_social_post_used(post['social_post_id'], True)
+                return jsonify({"success": True, "message": "Posted to LinkedIn!"})
+            else:
+                error_msg = result.get('error', 'Unknown error') if result else 'No response'
+                return jsonify({"error": f"Failed: {error_msg}"}), 400
+            
+    except Exception as e:
+        app.logger.exception("Error posting now for post %d", scheduled_id)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/schedule/<int:scheduled_id>/retry', methods=['POST'])
+def schedule_retry(scheduled_id: int):
+    """Retry a failed scheduled post."""
+    post = get_scheduled_post(scheduled_id)
+    
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    if post['status'] != 'failed':
+        return jsonify({"error": "Only failed posts can be retried"}), 400
+    
+    platform = post['platform'] if 'platform' in post.keys() else 'linkedin'
+    
+    # Get content
+    if post['post_type'] == 'social' and post['social_content']:
+        content = post['social_content']
+    elif post['post_type'] == 'article' and post['article_content']:
+        content = f"{post['article_topic']}\n\n{post['article_content'][:2800]}"
+    else:
+        return jsonify({"error": "No content found"}), 400
+    
+    # Get article topic for title
+    article_topic = post['article_topic'] if 'article_topic' in post.keys() else None
+    
+    try:
+        if platform == 'threads':
+            # Handle Threads posting
+            threads_token = get_threads_token()
+            if not threads_token:
+                return jsonify({"error": "Threads not connected"}), 400
+            
+            from threads_client import ThreadsClient
+            threads_client = ThreadsClient()
+            result = threads_client.create_text_post(
+                threads_token['access_token'],
+                threads_token['user_id'],
+                content,
+            )
+        else:
+            # Handle LinkedIn posting
+            token = get_linkedin_token()
+            if not token:
+                return jsonify({"error": "LinkedIn not connected"}), 400
+            
+            client = get_linkedin_client()
+            result = client.create_smart_post(
+                token['access_token'],
+                token['user_urn'],
+                content,
+                article_title=article_topic,
+            )
+        
+        if result and result.get('success'):
+            update_scheduled_post_status(
+                scheduled_id,
+                status='posted',
+                posted_at=datetime.now().isoformat(timespec='seconds'),
+                linkedin_post_urn=result.get('post_urn'),
+            )
+            return jsonify({"success": True, "message": "Post successful!"})
+        else:
+            error_msg = result.get('error', 'Unknown error') if result else 'No response'
+            update_scheduled_post_status(
+                scheduled_id,
+                status='failed',
+                error_message=f"Retry failed: {error_msg}",
+            )
+            return jsonify({"error": f"Failed: {error_msg}"}), 400
+            
+    except Exception as e:
+        app.logger.exception("Error retrying post %d", scheduled_id)
+        update_scheduled_post_status(
+            scheduled_id,
+            status='failed',
+            error_message=f"Retry exception: {str(e)}",
+        )
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/schedule/clear-queue', methods=['POST'])
@@ -2122,8 +2324,9 @@ def schedule_edit(scheduled_id: int):
     # Validate datetime format
     try:
         dt = datetime.fromisoformat(scheduled_for.replace('Z', '+00:00'))
-        # Ensure it's in the future
-        if dt <= datetime.utcnow():
+        # Ensure it's in the future (use local time for comparison since form uses local time)
+        # Allow a small buffer (1 minute) to avoid edge cases
+        if dt <= datetime.now() - timedelta(minutes=1):
             return jsonify({"error": "Scheduled time must be in the future"}), 400
         # Normalize to ISO format
         scheduled_for = dt.isoformat(timespec="seconds")
@@ -2202,6 +2405,10 @@ def schedule_slot_add():
         enabled=True,
     )
     
+    # Redistribute all pending posts to use the new optimal slots
+    linkedin_redistributed = redistribute_scheduled_posts('linkedin')
+    threads_redistributed = redistribute_scheduled_posts('threads')
+    
     day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     day_display = 'Every day' if day_of_week == -1 else day_names[day_of_week]
     
@@ -2213,6 +2420,10 @@ def schedule_slot_add():
             "day_display": day_display,
             "time_slot": time_slot,
             "enabled": True,
+        },
+        "redistributed": {
+            "linkedin": linkedin_redistributed,
+            "threads": threads_redistributed,
         }
     })
 
@@ -2229,9 +2440,54 @@ def schedule_slot_toggle(slot_id: int):
     new_enabled = not bool(slot['enabled'])
     update_time_slot(slot_id, enabled=new_enabled)
     
+    # Redistribute all pending posts to use the new optimal slots
+    redistribute_scheduled_posts('linkedin')
+    redistribute_scheduled_posts('threads')
+    
     return jsonify({
         "success": True,
         "enabled": new_enabled,
+    })
+
+
+@app.route('/schedule/slots/<int:slot_id>/edit', methods=['POST'])
+def schedule_slot_edit(slot_id: int):
+    """Edit a time slot's day and time."""
+    day_of_week = request.form.get('day_of_week', type=int)
+    time_slot = request.form.get('time_slot', '').strip()
+    
+    if day_of_week is None:
+        return jsonify({"error": "Day of week is required"}), 400
+    
+    if not time_slot:
+        return jsonify({"error": "Time is required"}), 400
+    
+    # Validate time format (HH:MM)
+    try:
+        hour, minute = map(int, time_slot.split(':'))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError()
+        time_slot = f"{hour:02d}:{minute:02d}"
+    except (ValueError, AttributeError):
+        return jsonify({"error": "Invalid time format. Use HH:MM (24-hour)"}), 400
+    
+    # Validate day_of_week
+    if day_of_week < -1 or day_of_week > 6:
+        return jsonify({"error": "Invalid day of week"}), 400
+    
+    # Update the slot
+    update_time_slot(slot_id, day_of_week=day_of_week, time_slot=time_slot)
+    
+    # Redistribute all pending posts to use the new optimal slots
+    linkedin_redistributed = redistribute_scheduled_posts('linkedin')
+    threads_redistributed = redistribute_scheduled_posts('threads')
+    
+    return jsonify({
+        "success": True,
+        "redistributed": {
+            "linkedin": linkedin_redistributed,
+            "threads": threads_redistributed,
+        }
     })
 
 
@@ -2239,7 +2495,45 @@ def schedule_slot_toggle(slot_id: int):
 def schedule_slot_delete(slot_id: int):
     """Delete a time slot."""
     delete_time_slot(slot_id)
+    
+    # Redistribute all pending posts to use the remaining slots
+    redistribute_scheduled_posts('linkedin')
+    redistribute_scheduled_posts('threads')
     return jsonify({"success": True, "message": "Slot deleted"})
+
+
+@app.route('/schedule/daily-limits', methods=['GET', 'POST'])
+def schedule_daily_limits():
+    """Get or update daily posting limits per platform."""
+    if request.method == 'GET':
+        limits = get_all_daily_limits()
+        return jsonify({
+            "linkedin": limits.get('linkedin', 0),
+            "threads": limits.get('threads', 0),
+        })
+    
+    # POST - update limits
+    platform = request.form.get('platform', '').strip().lower()
+    limit = request.form.get('limit', type=int, default=0)
+    
+    if platform not in ('linkedin', 'threads'):
+        return jsonify({"error": "Invalid platform. Must be 'linkedin' or 'threads'"}), 400
+    
+    if limit < 0:
+        return jsonify({"error": "Limit must be 0 or greater (0 = unlimited)"}), 400
+    
+    set_daily_limit(platform, limit)
+    
+    # Redistribute posts for this platform to respect the new limit
+    redistributed = redistribute_scheduled_posts(platform)
+    
+    return jsonify({
+        "success": True,
+        "platform": platform,
+        "limit": limit,
+        "redistributed": redistributed,
+        "message": f"{'Unlimited' if limit == 0 else limit} posts per day for {platform.capitalize()}"
+    })
 
 
 @app.route('/schedule/next-slot', methods=['GET'])
@@ -2293,7 +2587,7 @@ def scheduled_post_worker() -> None:
             
             for post in pending:
                 try:
-                    platform = post.get('platform', 'linkedin')
+                    platform = post['platform'] if 'platform' in post.keys() else 'linkedin'
                     
                     # Get article topic safely from sqlite3.Row
                     article_topic = post['article_topic'] if 'article_topic' in post.keys() else None
@@ -2358,7 +2652,7 @@ def scheduled_post_worker() -> None:
                             update_scheduled_post_status(
                                 post['id'],
                                 status='posted',
-                                linkedin_post_urn=result.get('post_id'),  # Reuse field for Threads post ID
+                                linkedin_post_urn=result.get('permalink'),  # Store permalink for view link
                             )
                             if post['social_post_id']:
                                 mark_social_post_used(post['social_post_id'], True)
@@ -2454,10 +2748,39 @@ def scheduled_post_worker() -> None:
             app.logger.exception("Error in scheduled post worker")
 
 
-# Start the scheduled post worker thread
-scheduled_worker_thread = threading.Thread(target=scheduled_post_worker, daemon=True)
-scheduled_worker_thread.start()
+def start_workers():
+    """Start all background worker threads."""
+    # Episode processing worker
+    episode_worker = threading.Thread(target=worker, daemon=True)
+    episode_worker.start()
+    app.logger.info("Episode processing worker started")
+    
+    # Scheduled post worker
+    scheduled_worker = threading.Thread(target=scheduled_post_worker, daemon=True)
+    scheduled_worker.start()
+    app.logger.info("Scheduled post worker started")
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5001)))
+    # In debug mode with reloader, Flask spawns two processes:
+    # - Parent process (reloader): WERKZEUG_RUN_MAIN is NOT set
+    # - Child process (actual server): WERKZEUG_RUN_MAIN='true'
+    # We only want ONE set of workers to avoid duplicate posts
+    #
+    # WERKZEUG_RUN_MAIN will be:
+    # - 'true' in the child process (actual server) when using reloader
+    # - Not set in the parent process (reloader)
+    # - Not set when running without reloader (production)
+    
+    use_reloader = True  # Set to False for production
+    
+    if use_reloader:
+        # Only start workers in the child process (not the reloader parent)
+        if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+            start_workers()
+    else:
+        # No reloader, just start the workers
+        start_workers()
+    
+    # Run the Flask app
+    app.run(debug=use_reloader, host='0.0.0.0', port=int(os.environ.get('PORT', 5001)), use_reloader=use_reloader)

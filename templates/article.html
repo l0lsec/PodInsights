@@ -911,16 +911,18 @@ function showQueueAllModal() {
     let linkedinCount = 0;
     let threadsCount = 0;
     
-    // Get all post items and check which ones don't have the scheduled indicator
+    // Get all post items and check which ones aren't scheduled AND aren't used
     document.querySelectorAll('.social-copy-card[data-platform="linkedin"] .post-item').forEach(item => {
-        // Check if the queue button is enabled (not showing ✅)
+        // Check if the queue button is enabled (not showing ✅) AND not already used
         const queueBtn = item.querySelector('.btn-outline-success[data-platform="linkedin"]');
-        if (queueBtn) linkedinCount++;
+        const usedBadge = item.querySelector('.used-badge');
+        if (queueBtn && !usedBadge) linkedinCount++;
     });
     
     document.querySelectorAll('.social-copy-card[data-platform="threads"] .post-item').forEach(item => {
         const queueBtn = item.querySelector('.btn-outline-success[data-platform="threads"]');
-        if (queueBtn) threadsCount++;
+        const usedBadge = item.querySelector('.used-badge');
+        if (queueBtn && !usedBadge) threadsCount++;
     });
     
     // Update counts in modal
@@ -943,11 +945,13 @@ async function queueAllUnscheduled(platform) {
         return;
     }
     
-    // Find all unscheduled posts for this platform
+    // Find all unscheduled posts for this platform (exclude used posts)
     const postsToQueue = [];
     document.querySelectorAll(`.social-copy-card[data-platform="${platform}"] .post-item`).forEach(item => {
         const queueBtn = item.querySelector(`.btn-outline-success[data-platform="${platform}"]`);
-        if (queueBtn) {
+        const usedBadge = item.querySelector('.used-badge');
+        // Only queue if has queue button AND not already used
+        if (queueBtn && !usedBadge) {
             postsToQueue.push({
                 postId: parseInt(queueBtn.dataset.postId),
                 btn: queueBtn

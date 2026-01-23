@@ -250,9 +250,33 @@ class ThreadsClient:
             if publish_response.status_code == 200:
                 publish_data = publish_response.json()
                 post_id = publish_data.get("id")
+                
+                # Fetch post details to get permalink and shortcode
+                permalink = None
+                shortcode = None
+                if post_id:
+                    try:
+                        details_params = {
+                            "fields": "permalink,shortcode",
+                            "access_token": access_token,
+                        }
+                        details_response = requests.get(
+                            f"{THREADS_API_HOST}/{post_id}",
+                            params=details_params,
+                            timeout=10,
+                        )
+                        if details_response.status_code == 200:
+                            details_data = details_response.json()
+                            permalink = details_data.get("permalink")
+                            shortcode = details_data.get("shortcode")
+                    except Exception as e:
+                        logger.warning("Failed to fetch post details: %s", e)
+                
                 return {
                     "success": True,
                     "post_id": post_id,
+                    "shortcode": shortcode,
+                    "permalink": permalink,
                     "status_code": publish_response.status_code,
                 }
             else:

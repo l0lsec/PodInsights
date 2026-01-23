@@ -56,33 +56,36 @@
     </div>
     <div class="collapse show" id="timeSlotsCollapse">
         <div class="card-body">
-            {% if next_slots %}
-            <div class="alert alert-info mb-3">
-                <strong>📌 Next available slots by platform:</strong>
+            <div class="alert alert-info mb-3" id="next-slots-container">
+                <div class="d-flex justify-content-between align-items-start">
+                    <strong>📌 Next available slots by platform:</strong>
+                    <button class="btn btn-sm btn-outline-primary" onclick="refreshNextSlots()" title="Refresh">
+                        🔄
+                    </button>
+                </div>
                 <div class="row mt-2">
                     <div class="col-md-6">
                         <span class="badge" style="background-color: #0077B5;">💼 LinkedIn</span>
-                        {% if next_slots.linkedin %}
-                        {{ next_slots.linkedin }}
-                        {% else %}
-                        <span class="text-muted">No slots available</span>
-                        {% endif %}
+                        <span id="next-slot-linkedin">
+                            {% if next_slots and next_slots.linkedin %}
+                            {{ next_slots.linkedin }}
+                            {% else %}
+                            <span class="text-muted">No slots available</span>
+                            {% endif %}
+                        </span>
                     </div>
                     <div class="col-md-6">
                         <span class="badge bg-dark">🧵 Threads</span>
-                        {% if next_slots.threads %}
-                        {{ next_slots.threads }}
-                        {% else %}
-                        <span class="text-muted">No slots available</span>
-                        {% endif %}
+                        <span id="next-slot-threads">
+                            {% if next_slots and next_slots.threads %}
+                            {{ next_slots.threads }}
+                            {% else %}
+                            <span class="text-muted">No slots available</span>
+                            {% endif %}
+                        </span>
                     </div>
                 </div>
             </div>
-            {% elif next_slot_display %}
-            <div class="alert alert-info mb-3">
-                <strong>📌 Next available slot:</strong> {{ next_slot_display }}
-            </div>
-            {% endif %}
             
             <p class="text-muted mb-3">
                 Configure your posting times. When you "Add to Queue" from an article, posts will be automatically scheduled for the next available time slot.
@@ -138,6 +141,9 @@
                                     {% endif %}
                                 </td>
                                 <td>
+                                    <button class="btn btn-xs btn-outline-primary" onclick="openEditSlotModal({{ slot.id }}, {{ slot.day_of_week }}, '{{ slot.time_slot }}')" title="Edit">
+                                        ✏️
+                                    </button>
                                     <button class="btn btn-xs btn-outline-secondary" onclick="toggleSlot({{ slot.id }})" title="Toggle">
                                         {% if slot.enabled %}⏸️{% else %}▶️{% endif %}
                                     </button>
@@ -155,6 +161,69 @@
                     <small>No time slots configured. Add your first posting time above.</small>
                 </div>
                 {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Daily Posting Limits -->
+<div class="card mb-4">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#dailyLimitsCollapse" style="cursor: pointer;">
+        <strong>📊 Daily Posting Limits</strong>
+        <span class="badge bg-secondary">Per Platform</span>
+    </div>
+    <div class="collapse show" id="dailyLimitsCollapse">
+        <div class="card-body">
+            <p class="text-muted mb-3">
+                Set the maximum number of posts that can be scheduled per day for each platform. Set to 0 for unlimited posts.
+            </p>
+            
+            <div class="row g-3">
+                <!-- LinkedIn Limit -->
+                <div class="col-md-6">
+                    <div class="card h-100" style="border-left: 4px solid #0077B5;">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="fw-bold">💼 LinkedIn</span>
+                                <span class="badge bg-info" id="linkedin-limit-badge">
+                                    {{ daily_limits.get('linkedin', 0) or 'Unlimited' }}{% if daily_limits.get('linkedin', 0) %}/day{% endif %}
+                                </span>
+                            </div>
+                            <div class="input-group input-group-sm">
+                                <input type="number" class="form-control" id="linkedin-limit-input" 
+                                       value="{{ daily_limits.get('linkedin', 0) }}" min="0" 
+                                       placeholder="0 = unlimited">
+                                <button class="btn btn-outline-primary" type="button" onclick="updateDailyLimit('linkedin')">
+                                    Save
+                                </button>
+                            </div>
+                            <small class="text-muted">0 = no limit</small>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Threads Limit -->
+                <div class="col-md-6">
+                    <div class="card h-100" style="border-left: 4px solid #000000;">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span class="fw-bold">🧵 Threads</span>
+                                <span class="badge bg-dark" id="threads-limit-badge">
+                                    {{ daily_limits.get('threads', 0) or 'Unlimited' }}{% if daily_limits.get('threads', 0) %}/day{% endif %}
+                                </span>
+                            </div>
+                            <div class="input-group input-group-sm">
+                                <input type="number" class="form-control" id="threads-limit-input" 
+                                       value="{{ daily_limits.get('threads', 0) }}" min="0" 
+                                       placeholder="0 = unlimited">
+                                <button class="btn btn-outline-dark" type="button" onclick="updateDailyLimit('threads')">
+                                    Save
+                                </button>
+                            </div>
+                            <small class="text-muted">0 = no limit</small>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -270,15 +339,32 @@
                             <button class="btn btn-sm btn-outline-primary" onclick="openEditModal({{ post.id }}, '{{ post.scheduled_for }}')" title="Edit Time">
                                 ✏️ Edit
                             </button>
+                            <button class="btn btn-sm btn-success" onclick="postNow({{ post.id }}, '{{ post.platform }}')" title="Post Now">
+                                🚀 Post Now
+                            </button>
                             <button class="btn btn-sm btn-outline-warning" onclick="cancelPost({{ post.id }})" title="Cancel">
                                 🚫 Cancel
                             </button>
                             {% elif post.status == 'posted' and post.linkedin_post_urn %}
-                            <a href="https://www.linkedin.com/feed/update/{{ post.linkedin_post_urn }}" 
-                               target="_blank" class="btn btn-sm btn-outline-primary" title="View on LinkedIn">
-                                🔗 View
-                            </a>
+                                {% if post.platform == 'threads' %}
+                                    {% if post.linkedin_post_urn.startswith('http') %}
+                                    <a href="{{ post.linkedin_post_urn }}" 
+                                       target="_blank" class="btn btn-sm btn-outline-dark" title="View on Threads">
+                                        🔗 View
+                                    </a>
+                                    {% else %}
+                                    <span class="text-muted small">No view link</span>
+                                    {% endif %}
+                                {% else %}
+                                <a href="https://www.linkedin.com/feed/update/{{ post.linkedin_post_urn }}" 
+                                   target="_blank" class="btn btn-sm btn-outline-primary" title="View on LinkedIn">
+                                    🔗 View
+                                </a>
+                                {% endif %}
                             {% elif post.status == 'failed' %}
+                            <button class="btn btn-sm btn-outline-success" onclick="retryPost({{ post.id }})" title="Retry Posting">
+                                🔄 Retry
+                            </button>
                             <button class="btn btn-sm btn-outline-danger" onclick="deletePost({{ post.id }})" title="Delete">
                                 🗑️ Delete
                             </button>
@@ -352,13 +438,100 @@
     </div>
 </div>
 
+<!-- Edit Time Slot Modal -->
+<div class="modal fade" id="editSlotModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">✏️ Edit Time Slot</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-slot-id">
+                <div class="mb-3">
+                    <label class="form-label">Day of Week</label>
+                    <select class="form-select" id="edit-slot-day">
+                        <option value="-1">Every day</option>
+                        <option value="0">Monday</option>
+                        <option value="1">Tuesday</option>
+                        <option value="2">Wednesday</option>
+                        <option value="3">Thursday</option>
+                        <option value="4">Friday</option>
+                        <option value="5">Saturday</option>
+                        <option value="6">Sunday</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Time</label>
+                    <input type="time" class="form-control" id="edit-slot-time" required>
+                </div>
+                <div class="alert alert-info mb-0">
+                    <small>
+                        <strong>💡 Note:</strong> Editing this slot will automatically redistribute all pending posts to use the optimal schedule.
+                    </small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitSlotEdit()">
+                    💾 Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 // Check connection status on load
 document.addEventListener('DOMContentLoaded', function() {
     checkLinkedInStatus();
     checkThreadsStatus();
+    // Auto-refresh next slots to ensure they're current
+    refreshNextSlots();
 });
+
+// Refresh next available slots display
+function refreshNextSlots() {
+    const linkedinSpan = document.getElementById('next-slot-linkedin');
+    const threadsSpan = document.getElementById('next-slot-threads');
+    
+    // Show loading state
+    if (linkedinSpan) linkedinSpan.innerHTML = '<span class="text-muted">Loading...</span>';
+    if (threadsSpan) threadsSpan.innerHTML = '<span class="text-muted">Loading...</span>';
+    
+    // Fetch LinkedIn next slot
+    fetch('/schedule/next-slot?platform=linkedin')
+        .then(response => response.json())
+        .then(data => {
+            if (linkedinSpan) {
+                if (data.next_slot_display) {
+                    linkedinSpan.textContent = data.next_slot_display;
+                } else {
+                    linkedinSpan.innerHTML = '<span class="text-muted">No slots available</span>';
+                }
+            }
+        })
+        .catch(() => {
+            if (linkedinSpan) linkedinSpan.innerHTML = '<span class="text-muted">Error loading</span>';
+        });
+    
+    // Fetch Threads next slot
+    fetch('/schedule/next-slot?platform=threads')
+        .then(response => response.json())
+        .then(data => {
+            if (threadsSpan) {
+                if (data.next_slot_display) {
+                    threadsSpan.textContent = data.next_slot_display;
+                } else {
+                    threadsSpan.innerHTML = '<span class="text-muted">No slots available</span>';
+                }
+            }
+        })
+        .catch(() => {
+            if (threadsSpan) threadsSpan.innerHTML = '<span class="text-muted">Error loading</span>';
+        });
+}
 
 function checkLinkedInStatus() {
     fetch('{{ url_for("linkedin_status") }}')
@@ -521,6 +694,34 @@ function disconnectThreads() {
         });
 }
 
+function postNow(postId, platform) {
+    if (!confirm(`Post this ${platform} content immediately?`)) return;
+    
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Posting...';
+    
+    fetch(`/schedule/${postId}/post-now`, { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                btn.innerHTML = '✅ Posted!';
+                btn.className = 'btn btn-sm btn-success';
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                alert(data.error || 'Failed to post');
+            }
+        })
+        .catch(error => {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+            alert('Error: ' + error.message);
+        });
+}
+
 function cancelPost(postId) {
     if (!confirm('Cancel this scheduled post?')) return;
     
@@ -552,6 +753,31 @@ function deletePost(postId) {
         })
         .catch(error => {
             alert('Error: ' + error.message);
+        });
+}
+
+function retryPost(postId) {
+    const btn = event.target;
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Retrying...';
+    btn.disabled = true;
+    
+    fetch(`/schedule/${postId}/retry`, { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Post successful!');
+                location.reload();
+            } else {
+                alert(data.error || 'Retry failed');
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        })
+        .catch(error => {
+            alert('Error: ' + error.message);
+            btn.innerHTML = originalText;
+            btn.disabled = false;
         });
 }
 
@@ -739,7 +965,8 @@ function deleteSlot(slotId) {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                document.getElementById(`slot-row-${slotId}`).remove();
+                // Reload to update next available slots
+                location.reload();
             } else {
                 alert(data.error || 'Failed to delete slot');
             }
@@ -747,6 +974,82 @@ function deleteSlot(slotId) {
         .catch(error => {
             alert('Error: ' + error.message);
         });
+}
+
+function openEditSlotModal(slotId, dayOfWeek, timeSlot) {
+    document.getElementById('edit-slot-id').value = slotId;
+    document.getElementById('edit-slot-day').value = dayOfWeek;
+    document.getElementById('edit-slot-time').value = timeSlot;
+    
+    const modal = new bootstrap.Modal(document.getElementById('editSlotModal'));
+    modal.show();
+}
+
+function submitSlotEdit() {
+    const slotId = document.getElementById('edit-slot-id').value;
+    const dayOfWeek = document.getElementById('edit-slot-day').value;
+    const timeSlot = document.getElementById('edit-slot-time').value;
+    
+    if (!timeSlot) {
+        alert('Please enter a time');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('day_of_week', dayOfWeek);
+    formData.append('time_slot', timeSlot);
+    
+    fetch(`/schedule/slots/${slotId}/edit`, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to update time slot');
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+    });
+}
+
+function updateDailyLimit(platform) {
+    const input = document.getElementById(`${platform}-limit-input`);
+    const limit = parseInt(input.value) || 0;
+    const btn = input.nextElementSibling;
+    
+    const formData = new FormData();
+    formData.append('platform', platform);
+    formData.append('limit', limit);
+    
+    // Show saving state
+    const originalText = btn.textContent;
+    btn.textContent = '⏳';
+    btn.disabled = true;
+    
+    fetch('/schedule/daily-limits', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Reload to show updated next available slots
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to update limit');
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+        btn.textContent = originalText;
+        btn.disabled = false;
+    });
 }
 </script>
 {% endblock %}
