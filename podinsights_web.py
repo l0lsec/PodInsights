@@ -61,6 +61,7 @@ from database import (
     # Scheduled posts functions
     add_scheduled_post,
     get_scheduled_post,
+    get_pending_schedules_for_social_posts,
     list_scheduled_posts,
     get_pending_scheduled_posts,
     update_scheduled_post_status,
@@ -1142,16 +1143,31 @@ def view_article(article_id: int):
     
     # Get saved social posts grouped by platform
     posts = list_social_posts(article_id)
+    
+    # Get pending schedules for all posts
+    post_ids = [post['id'] for post in posts]
+    pending_schedules = get_pending_schedules_for_social_posts(post_ids)
+    
     social_posts = {}
     for post in posts:
         platform = post['platform']
         if platform not in social_posts:
             social_posts[platform] = []
+        
+        # Check if this post is scheduled for this platform
+        schedules = pending_schedules.get(post['id'], [])
+        scheduled_for_platform = {}
+        for sched in schedules:
+            sched_platform = sched['platform']
+            if sched_platform not in scheduled_for_platform:
+                scheduled_for_platform[sched_platform] = sched['scheduled_for']
+        
         social_posts[platform].append({
             'id': post['id'],
             'content': post['content'],
             'created_at': post['created_at'],
             'used': bool(post['used']),
+            'scheduled': scheduled_for_platform,  # Dict of platform -> scheduled_for
         })
     
     return render_template('article.html', article=dict(article), social_posts=social_posts)
@@ -1919,12 +1935,12 @@ def schedule_add():
     use_queue = request.form.get('use_queue') == '1'  # Auto-schedule to next available slot
     platform = request.form.get('platform', 'linkedin')  # Platform: 'linkedin' or 'threads'
     
-    # If using queue, get the next available time slot
+    # If using queue, get the next available time slot for this platform
     if use_queue or not scheduled_for:
-        scheduled_for = get_next_available_slot()
+        scheduled_for = get_next_available_slot(platform=platform)
         if not scheduled_for:
             return jsonify({
-                "error": "No time slots configured. Please add posting times in the Schedule settings."
+                "error": f"No time slots available for {platform}. Please add posting times in the Schedule settings."
             }), 400
     
     if post_type == 'social' and not social_post_id:
@@ -2017,15 +2033,21 @@ def schedule_list():
             slot_dict['day_display'] = day_names[slot_dict['day_of_week']]
         time_slots_list.append(slot_dict)
     
-    # Get next available slot for display
-    next_slot = get_next_available_slot()
-    next_slot_display = None
-    if next_slot:
-        try:
-            dt = datetime.fromisoformat(next_slot)
-            next_slot_display = dt.strftime('%A, %B %d at %I:%M %p')
-        except (ValueError, TypeError):
-            next_slot_display = next_slot
+    # Get next available slot for each platform
+    next_slots = {}
+    for plat in ['linkedin', 'threads']:
+        slot = get_next_available_slot(platform=plat)
+        if slot:
+            try:
+                dt = datetime.fromisoformat(slot)
+                next_slots[plat] = dt.strftime('%A, %B %d at %I:%M %p')
+            except (ValueError, TypeError):
+                next_slots[plat] = slot
+        else:
+            next_slots[plat] = None
+    
+    # For backwards compatibility
+    next_slot_display = next_slots.get('linkedin')
     
     return render_template(
         'schedule.html',
@@ -2034,8 +2056,8 @@ def schedule_list():
         linkedin_connected=linkedin_connected,
         threads_connected=threads_connected,
         time_slots=time_slots_list,
-        next_slot=next_slot,
         next_slot_display=next_slot_display,
+        next_slots=next_slots,
     )
 
 
@@ -2222,13 +2244,14 @@ def schedule_slot_delete(slot_id: int):
 
 @app.route('/schedule/next-slot', methods=['GET'])
 def schedule_next_slot():
-    """Get the next available posting slot."""
-    next_slot = get_next_available_slot()
+    """Get the next available posting slot for a platform."""
+    platform = request.args.get('platform', 'linkedin')
+    next_slot = get_next_available_slot(platform=platform)
     
     if not next_slot:
         return jsonify({
             "available": False,
-            "message": "No time slots configured",
+            "message": f"No time slots available for {platform}",
         })
     
     try:

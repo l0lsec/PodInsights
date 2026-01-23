@@ -1071,6 +1071,40 @@ def get_scheduled_post(scheduled_id: int, db_path: str = DB_PATH) -> Optional[sq
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute("SELECT * FROM scheduled_posts WHERE id = ?", (scheduled_id,))
+
+
+def get_pending_schedules_for_social_posts(social_post_ids: List[int], db_path: str = DB_PATH) -> dict:
+    """Get pending scheduled posts for a list of social post IDs.
+    
+    Returns a dict mapping social_post_id -> list of {platform, scheduled_for} dicts
+    """
+    if not social_post_ids:
+        return {}
+    
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        placeholders = ",".join("?" for _ in social_post_ids)
+        cur = conn.execute(
+            f"""
+            SELECT social_post_id, platform, scheduled_for
+            FROM scheduled_posts
+            WHERE social_post_id IN ({placeholders})
+            AND status = 'pending'
+            ORDER BY scheduled_for ASC
+            """,
+            social_post_ids,
+        )
+        
+        result = {}
+        for row in cur.fetchall():
+            post_id = row['social_post_id']
+            if post_id not in result:
+                result[post_id] = []
+            result[post_id].append({
+                'platform': row['platform'],
+                'scheduled_for': row['scheduled_for'],
+            })
+        return result
         return cur.fetchone()
 
 
@@ -1334,11 +1368,18 @@ def delete_time_slot(slot_id: int, db_path: str = DB_PATH) -> None:
         conn.commit()
 
 
-def get_next_available_slot(db_path: str = DB_PATH) -> str | None:
-    """Find the next available time slot for scheduling.
+def get_next_available_slot(platform: str = "linkedin", db_path: str = DB_PATH) -> str | None:
+    """Find the next available time slot for scheduling on a specific platform.
+    
+    Each platform has its own queue, so a LinkedIn post and a Threads post
+    can be scheduled for the same time slot without conflict.
+    
+    Args:
+        platform: The platform to check slots for (e.g., 'linkedin', 'threads')
+        db_path: Database path
     
     Returns the next datetime (ISO format) based on configured time slots
-    that doesn't conflict with existing pending posts.
+    that doesn't conflict with existing pending posts FOR THE SAME PLATFORM.
     
     Note: Uses LOCAL time for comparison since time slots are configured
     in local time by the user.
@@ -1352,14 +1393,15 @@ def get_next_available_slot(db_path: str = DB_PATH) -> str | None:
     if not slots:
         return None
     
-    # Get existing pending posts to check for conflicts
+    # Get existing pending posts for THIS PLATFORM ONLY to check for conflicts
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute(
             """
             SELECT scheduled_for FROM scheduled_posts
-            WHERE status = 'pending'
-            """
+            WHERE status = 'pending' AND platform = ?
+            """,
+            (platform,),
         )
         existing_times = {row['scheduled_for'] for row in cur.fetchall()}
     
@@ -1394,7 +1436,7 @@ def get_next_available_slot(db_path: str = DB_PATH) -> str | None:
             if candidate <= now:
                 continue
             
-            # Check if this slot is already taken
+            # Check if this slot is already taken for THIS PLATFORM
             candidate_str = candidate.isoformat(timespec="seconds")
             if candidate_str not in existing_times:
                 return candidate_str

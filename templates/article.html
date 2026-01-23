@@ -109,8 +109,14 @@
                     <button type="button" class="btn btn-sm btn-outline-primary d-none select-mode-btn" id="select-all-btn" onclick="selectAllPosts()">
                         ☑️ Select All
                     </button>
+                    <button type="button" class="btn btn-sm btn-success d-none" id="queue-selected-btn" onclick="queueSelectedPosts()">
+                        ➕ Add to Queue (<span id="queue-selected-count">0</span>)
+                    </button>
                     <button type="button" class="btn btn-sm btn-danger d-none" id="delete-selected-btn" onclick="deleteSelectedPosts()">
                         🗑️ Delete Selected (<span id="selected-count">0</span>)
+                    </button>
+                    <button type="button" class="btn btn-sm btn-primary" onclick="showQueueAllModal()">
+                        🚀 Queue All Unscheduled
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-danger" onclick="clearAllPosts()">
                         🗑️ Clear All
@@ -144,6 +150,14 @@
                                     {% if post.used %}
                                     <span class="badge bg-success used-badge">✓ Used</span>
                                     {% endif %}
+                                    {% if post.scheduled %}
+                                        {% for sched_platform, sched_time in post.scheduled.items() %}
+                                        <span class="badge {% if sched_platform == 'linkedin' %}text-bg-primary{% elif sched_platform == 'threads' %}text-bg-dark{% else %}bg-info{% endif %}" 
+                                              title="{{ sched_time }}">
+                                            📅 {{ sched_platform|capitalize }}
+                                        </span>
+                                        {% endfor %}
+                                    {% endif %}
                                 </div>
                                 <div class="btn-group btn-group-sm post-actions">
                                     <button class="btn btn-outline-secondary" onclick="copySavedPost(this, {{ post.id }})" title="Copy">
@@ -159,9 +173,15 @@
                                     <button class="btn btn-outline-info linkedin-post-btn" onclick="postToLinkedIn({{ post.id }}, this)" title="Post to LinkedIn Now" data-post-id="{{ post.id }}">
                                         💼
                                     </button>
-                                    <button class="btn btn-outline-success" onclick="addToQueue({{ post.id }}, 'social', 'linkedin', this)" title="Add to Queue">
+                                    {% if post.scheduled and post.scheduled.linkedin %}
+                                    <button class="btn btn-success" disabled title="Scheduled: {{ post.scheduled.linkedin }}">
+                                        ✅
+                                    </button>
+                                    {% else %}
+                                    <button class="btn btn-outline-success" onclick="addToQueue({{ post.id }}, 'social', 'linkedin', this)" title="Add to Queue" data-post-id="{{ post.id }}" data-platform="linkedin">
                                         ➕
                                     </button>
+                                    {% endif %}
                                     <button class="btn btn-outline-warning" onclick="openScheduleModal({{ post.id }}, 'social', 'linkedin')" title="Schedule for Specific Time">
                                         📅
                                     </button>
@@ -169,9 +189,15 @@
                                     <button class="btn btn-outline-dark threads-post-btn" onclick="postToThreads({{ post.id }}, this)" title="Post to Threads Now" data-post-id="{{ post.id }}">
                                         🧵
                                     </button>
-                                    <button class="btn btn-outline-success" onclick="addToQueue({{ post.id }}, 'social', 'threads', this)" title="Add to Queue">
+                                    {% if post.scheduled and post.scheduled.threads %}
+                                    <button class="btn btn-success" disabled title="Scheduled: {{ post.scheduled.threads }}">
+                                        ✅
+                                    </button>
+                                    {% else %}
+                                    <button class="btn btn-outline-success" onclick="addToQueue({{ post.id }}, 'social', 'threads', this)" title="Add to Queue" data-post-id="{{ post.id }}" data-platform="threads">
                                         ➕
                                     </button>
+                                    {% endif %}
                                     <button class="btn btn-outline-warning" onclick="openScheduleModal({{ post.id }}, 'social', 'threads')" title="Schedule for Specific Time">
                                         📅
                                     </button>
@@ -650,10 +676,30 @@ function updateSelectedCount() {
     document.getElementById('selected-count').textContent = count;
     
     const deleteBtn = document.getElementById('delete-selected-btn');
+    const queueBtn = document.getElementById('queue-selected-btn');
+    
     if (count > 0 && selectModeActive) {
         deleteBtn.classList.remove('d-none');
+        
+        // Count queueable posts (LinkedIn or Threads)
+        let queueableCount = 0;
+        selected.forEach(cb => {
+            const card = cb.closest('.social-copy-card');
+            const platform = card ? card.dataset.platform : '';
+            if (platform === 'linkedin' || platform === 'threads') {
+                queueableCount++;
+            }
+        });
+        
+        document.getElementById('queue-selected-count').textContent = queueableCount;
+        if (queueableCount > 0) {
+            queueBtn.classList.remove('d-none');
+        } else {
+            queueBtn.classList.add('d-none');
+        }
     } else {
         deleteBtn.classList.add('d-none');
+        queueBtn.classList.add('d-none');
     }
     
     // Update Select All button text
@@ -736,6 +782,241 @@ function deleteSelectedPosts() {
     .catch(error => {
         alert('Error: ' + error.message);
     });
+}
+
+async function queueSelectedPosts() {
+    const selected = document.querySelectorAll('.post-select-checkbox:checked');
+    
+    // Build list of queueable posts with their platforms
+    const postsToQueue = [];
+    selected.forEach(cb => {
+        const card = cb.closest('.social-copy-card');
+        const platform = card ? card.dataset.platform : '';
+        if (platform === 'linkedin' || platform === 'threads') {
+            postsToQueue.push({
+                postId: parseInt(cb.dataset.postId),
+                platform: platform,
+                btn: cb.closest('.post-item').querySelector('.btn-outline-success')
+            });
+        }
+    });
+    
+    if (postsToQueue.length === 0) {
+        alert('No queueable posts selected (only LinkedIn and Threads posts can be queued)');
+        return;
+    }
+    
+    // Check connections
+    const needsLinkedIn = postsToQueue.some(p => p.platform === 'linkedin');
+    const needsThreads = postsToQueue.some(p => p.platform === 'threads');
+    
+    if (needsLinkedIn && !linkedinConnected) {
+        alert('Please connect LinkedIn first');
+        return;
+    }
+    if (needsThreads && !threadsConnected) {
+        alert('Please connect Threads first. Go to Schedule page to connect.');
+        return;
+    }
+    
+    // Show processing state
+    const queueBtn = document.getElementById('queue-selected-btn');
+    const originalText = queueBtn.innerHTML;
+    queueBtn.innerHTML = '⏳ Adding...';
+    queueBtn.disabled = true;
+    
+    let successCount = 0;
+    let errorCount = 0;
+    
+    // Process posts sequentially to avoid overwhelming the server
+    for (const post of postsToQueue) {
+        try {
+            const formData = new FormData();
+            formData.append('post_type', 'social');
+            formData.append('use_queue', '1');
+            formData.append('platform', post.platform);
+            formData.append('social_post_id', post.postId);
+            
+            const response = await fetch('{{ url_for("schedule_add") }}', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                successCount++;
+                // Update the individual button
+                if (post.btn) {
+                    post.btn.innerHTML = '✅';
+                    post.btn.classList.remove('btn-outline-success');
+                    post.btn.classList.add('btn-success');
+                }
+            } else {
+                errorCount++;
+            }
+        } catch (e) {
+            errorCount++;
+        }
+    }
+    
+    // Reset button
+    queueBtn.innerHTML = originalText;
+    queueBtn.disabled = false;
+    
+    // Show result
+    if (errorCount === 0) {
+        showToast(`Added ${successCount} post${successCount !== 1 ? 's' : ''} to queue`, 'success');
+    } else {
+        showToast(`Added ${successCount}, failed ${errorCount}`, errorCount > successCount ? 'error' : 'warning');
+    }
+    
+    // Exit select mode
+    toggleSelectMode();
+}
+
+function showToast(message, type = 'info') {
+    // Remove existing toast if any
+    const existingToast = document.getElementById('queue-toast');
+    if (existingToast) existingToast.remove();
+    
+    // Create toast element
+    const toast = document.createElement('div');
+    toast.id = 'queue-toast';
+    toast.className = 'position-fixed bottom-0 end-0 p-3';
+    toast.style.zIndex = '9999';
+    
+    const bgClass = type === 'success' ? 'bg-success' : type === 'error' ? 'bg-danger' : type === 'warning' ? 'bg-warning text-dark' : 'bg-info';
+    
+    toast.innerHTML = `
+        <div class="toast show align-items-center text-white ${bgClass} border-0" role="alert">
+            <div class="d-flex">
+                <div class="toast-body">
+                    ${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'} ${message}
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="this.closest('#queue-toast').remove()"></button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(toast);
+    
+    // Auto-remove after 3 seconds
+    setTimeout(() => {
+        if (toast.parentNode) toast.remove();
+    }, 3000);
+}
+
+function showQueueAllModal() {
+    // Count unscheduled posts for each platform
+    let linkedinCount = 0;
+    let threadsCount = 0;
+    
+    // Get all post items and check which ones don't have the scheduled indicator
+    document.querySelectorAll('.social-copy-card[data-platform="linkedin"] .post-item').forEach(item => {
+        // Check if the queue button is enabled (not showing ✅)
+        const queueBtn = item.querySelector('.btn-outline-success[data-platform="linkedin"]');
+        if (queueBtn) linkedinCount++;
+    });
+    
+    document.querySelectorAll('.social-copy-card[data-platform="threads"] .post-item').forEach(item => {
+        const queueBtn = item.querySelector('.btn-outline-success[data-platform="threads"]');
+        if (queueBtn) threadsCount++;
+    });
+    
+    // Update counts in modal
+    document.getElementById('unscheduled-linkedin-count').textContent = linkedinCount;
+    document.getElementById('unscheduled-threads-count').textContent = threadsCount;
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('queueAllModal'));
+    modal.show();
+}
+
+async function queueAllUnscheduled(platform) {
+    // Check connection
+    if (platform === 'linkedin' && !linkedinConnected) {
+        alert('Please connect LinkedIn first');
+        return;
+    }
+    if (platform === 'threads' && !threadsConnected) {
+        alert('Please connect Threads first. Go to Schedule page to connect.');
+        return;
+    }
+    
+    // Find all unscheduled posts for this platform
+    const postsToQueue = [];
+    document.querySelectorAll(`.social-copy-card[data-platform="${platform}"] .post-item`).forEach(item => {
+        const queueBtn = item.querySelector(`.btn-outline-success[data-platform="${platform}"]`);
+        if (queueBtn) {
+            postsToQueue.push({
+                postId: parseInt(queueBtn.dataset.postId),
+                btn: queueBtn
+            });
+        }
+    });
+    
+    if (postsToQueue.length === 0) {
+        showToast(`No unscheduled ${platform} posts to queue`, 'warning');
+        return;
+    }
+    
+    // Close modal
+    bootstrap.Modal.getInstance(document.getElementById('queueAllModal')).hide();
+    
+    // Show processing toast
+    showToast(`Adding ${postsToQueue.length} posts to ${platform} queue...`, 'info');
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    // Queue posts sequentially to get different time slots
+    for (const post of postsToQueue) {
+        const formData = new FormData();
+        formData.append('post_type', 'social');
+        formData.append('social_post_id', post.postId);
+        formData.append('article_id', '{{ article.id }}');
+        formData.append('use_queue', '1');
+        formData.append('platform', platform);
+        
+        try {
+            const response = await fetch('/schedule/add', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            if (response.ok) {
+                successCount++;
+                // Update button state
+                post.btn.outerHTML = `<button class="btn btn-success" disabled title="Scheduled: ${data.scheduled_for}">✅</button>`;
+                
+                // Add scheduled badge
+                const postItem = document.querySelector(`.post-item [data-post-id="${post.postId}"]`)?.closest('.post-item');
+                if (postItem) {
+                    const badgeContainer = postItem.querySelector('.d-flex.align-items-center.gap-2');
+                    if (badgeContainer && !badgeContainer.querySelector(`.badge[data-platform="${platform}"]`)) {
+                        const badge = document.createElement('span');
+                        badge.className = platform === 'linkedin' ? 'badge text-bg-primary' : 'badge text-bg-dark';
+                        badge.dataset.platform = platform;
+                        badge.title = data.scheduled_for;
+                        badge.innerHTML = `📅 ${platform.charAt(0).toUpperCase() + platform.slice(1)}`;
+                        badgeContainer.appendChild(badge);
+                    }
+                }
+            } else {
+                failCount++;
+            }
+        } catch (error) {
+            failCount++;
+        }
+    }
+    
+    // Show result toast
+    if (failCount === 0) {
+        showToast(`Successfully queued ${successCount} posts for ${platform}!`, 'success');
+    } else {
+        showToast(`Queued ${successCount} posts, ${failCount} failed`, failCount > successCount ? 'error' : 'warning');
+    }
 }
 
 function editPost(postId) {
@@ -1077,11 +1358,6 @@ function addToQueue(postId, postType, platform, btn) {
         return;
     }
     
-    const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
-    if (!confirm(`Add this post to the ${platformName} scheduling queue? It will be posted at the next available time slot.`)) {
-        return;
-    }
-    
     const originalHtml = btn.innerHTML;
     btn.innerHTML = '⏳';
     btn.disabled = true;
@@ -1107,13 +1383,13 @@ function addToQueue(postId, postType, platform, btn) {
             btn.classList.remove('btn-outline-success');
             btn.classList.add('btn-success');
             
-            // Show a nice notification with the scheduled time
+            // Show a brief toast notification
             const scheduledTime = data.scheduled_for_display || data.scheduled_for;
-            alert(`Post added to ${platformName} queue!\n\nScheduled for: ${scheduledTime}`);
+            showToast(`Queued for ${scheduledTime}`, 'success');
         } else {
             btn.innerHTML = originalHtml;
             btn.disabled = false;
-            alert('Error: ' + (data.error || 'Failed to add to queue'));
+            showToast('Error: ' + (data.error || 'Failed to add to queue'), 'error');
         }
     })
     .catch(error => {
@@ -1229,6 +1505,41 @@ function submitSchedule() {
                 <button type="button" class="btn btn-primary" onclick="submitSchedule()">
                     📅 Schedule Post
                 </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Queue All Unscheduled Modal -->
+<div class="modal fade" id="queueAllModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header" style="background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%); color: white;">
+                <h5 class="modal-title">🚀 Queue All Unscheduled Posts</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-3">Select the platform to queue all unscheduled posts:</p>
+                
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-lg" style="background-color: #0077B5; color: white;" onclick="queueAllUnscheduled('linkedin')">
+                        💼 LinkedIn
+                        <span class="badge bg-light text-dark ms-2" id="unscheduled-linkedin-count">0</span>
+                    </button>
+                    <button type="button" class="btn btn-lg btn-dark" onclick="queueAllUnscheduled('threads')">
+                        🧵 Threads
+                        <span class="badge bg-light text-dark ms-2" id="unscheduled-threads-count">0</span>
+                    </button>
+                </div>
+                
+                <div class="alert alert-info mt-3 mb-0">
+                    <small>
+                        <strong>Note:</strong> Posts will be queued to the next available time slots for the selected platform.
+                    </small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
             </div>
         </div>
     </div>

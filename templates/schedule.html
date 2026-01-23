@@ -56,7 +56,29 @@
     </div>
     <div class="collapse show" id="timeSlotsCollapse">
         <div class="card-body">
-            {% if next_slot_display %}
+            {% if next_slots %}
+            <div class="alert alert-info mb-3">
+                <strong>📌 Next available slots by platform:</strong>
+                <div class="row mt-2">
+                    <div class="col-md-6">
+                        <span class="badge" style="background-color: #0077B5;">💼 LinkedIn</span>
+                        {% if next_slots.linkedin %}
+                        {{ next_slots.linkedin }}
+                        {% else %}
+                        <span class="text-muted">No slots available</span>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6">
+                        <span class="badge bg-dark">🧵 Threads</span>
+                        {% if next_slots.threads %}
+                        {{ next_slots.threads }}
+                        {% else %}
+                        <span class="text-muted">No slots available</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% elif next_slot_display %}
             <div class="alert alert-info mb-3">
                 <strong>📌 Next available slot:</strong> {{ next_slot_display }}
             </div>
