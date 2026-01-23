@@ -20,7 +20,8 @@ PodInsights is the ultimate podcast analysis tool for creators, researchers, and
 - **Article Generation** - Transform podcast content into polished blog posts and articles on tech, privacy, and cybersecurity topics
 - **Social Media Content** - Auto-generate platform-optimized social media posts from your articles
 - **LinkedIn Integration** - Post social media content directly to LinkedIn with rich link previews
-- **Post Scheduling** - Queue posts with configurable time slots for automated publishing
+- **Threads Integration** - Post social media content directly to Threads (Meta)
+- **Post Scheduling** - Queue posts with configurable time slots for automated publishing to LinkedIn or Threads
 - **JIRA Integration** - Seamlessly create tickets from extracted action items for project management
 - **RSS Feed Support** - Process entire podcast feeds directly from their source
 
@@ -165,10 +166,17 @@ The following environment variables control authentication, model selection, and
 - **`LINKEDIN_CLIENT_SECRET`**: Your LinkedIn app's Client Secret.
 - **`LINKEDIN_REDIRECT_URI`**: The OAuth callback URL (default: `http://localhost:5001/linkedin/callback`). Must match the redirect URI configured in your LinkedIn app.
 
+### Required for Threads Integration (Web UI)
+
+- **`THREADS_APP_ID`**: Your Threads app's App ID from the [Meta Developer Portal](https://developers.facebook.com/).
+- **`THREADS_APP_SECRET`**: Your Threads app's App Secret.
+- **`THREADS_REDIRECT_URI`**: The OAuth callback URL (must be HTTPS, e.g., `https://your-domain.com/threads/callback`). Must match the redirect URI configured in your Meta app.
+
 ### Optional for Web UI
 
 - **`PORT`**: The port for the Flask web server (default: `5001`). Set this if you want the web UI to run on a different port.
 - **`LINKEDIN_SCOPES`**: OAuth scopes for LinkedIn (default: `openid profile w_member_social`). Only change if you have specific scope requirements.
+- **`THREADS_SCOPES`**: OAuth scopes for Threads (default: `threads_basic,threads_content_publish`). Only change if you have specific scope requirements.
 
 ## Usage (CLI)
 
@@ -296,11 +304,70 @@ Use the **Schedule** page to manage your posting queue and configure automated p
 
 The background worker automatically publishes scheduled posts when their time arrives.
 
+### Posting to Threads
+
+Share your generated social media content directly to Threads (Meta). The integration supports both immediate posting and scheduled publishing.
+
+#### Setting Up Threads Integration
+
+1. **Create a Meta App** at the [Meta Developer Portal](https://developers.facebook.com/apps/)
+2. **Add the Threads API** use case to your app:
+   - Go to "Use cases" → "Add use case" → Select "Threads API"
+   - Request the following permissions: `threads_basic`, `threads_content_publish`
+3. **Configure the OAuth redirect URL** in your app settings:
+   - Navigate to Threads API → Settings
+   - Add your HTTPS redirect URI (e.g., `https://your-domain.com/threads/callback`)
+   - **Note:** Meta requires HTTPS for redirect URIs
+4. **Set environment variables**:
+   ```bash
+   export THREADS_APP_ID="your-app-id"
+   export THREADS_APP_SECRET="your-app-secret"
+   export THREADS_REDIRECT_URI="https://your-domain.com/threads/callback"
+   ```
+5. **Connect your account** by clicking "Connect Threads" on the Schedule page
+
+#### Local Development with HTTPS
+
+Meta requires HTTPS for OAuth redirect URIs. For local development, use [ngrok](https://ngrok.com/) to create a secure tunnel:
+
+1. **Install ngrok**:
+   ```bash
+   brew install ngrok  # macOS
+   # or download from https://ngrok.com/download
+   ```
+
+2. **Create a free account** at [dashboard.ngrok.com/signup](https://dashboard.ngrok.com/signup)
+
+3. **Configure ngrok** with your auth token:
+   ```bash
+   ngrok config add-authtoken YOUR_AUTH_TOKEN
+   ```
+
+4. **Start the tunnel**:
+   ```bash
+   ngrok http 5001
+   ```
+
+5. **Update your configuration**:
+   - Copy the HTTPS URL (e.g., `https://xxxx.ngrok-free.app`)
+   - Set `THREADS_REDIRECT_URI=https://xxxx.ngrok-free.app/threads/callback` in your `.env`
+   - Add the same URL to Meta Developer Portal's Valid OAuth Redirect URIs
+
+**Note:** Free ngrok URLs change each restart. Consider a paid plan for a stable subdomain.
+
+#### Posting Content to Threads
+
+From any article page, you can:
+- **Post to Threads** - Click the 🧵 button next to any generated social post
+- **Add to Queue** - Click the ➕ button and select "Threads" to schedule for the next available time slot
+- **Schedule for Specific Time** - Click the 📅 button, select "Threads", and pick a custom date/time
+
 ## Credits
 
 Developed by Sedric "ShowUpShowOut" Louissaint from Show Up Show Out Security. 
 
 Learn more about Show Up Show Out Security at [susos.co](https://susos.co).
+
 
 ## License
 
