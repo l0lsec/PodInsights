@@ -133,9 +133,9 @@
                             ☑️ All
                         </button>
                     </div>
-                    <div class="social-copy-body">
+                    <div class="social-copy-body" data-platform="{{ platform }}">
                         {% for post in posts %}
-                        <div class="post-item {% if not loop.first %}mt-3 pt-3 border-top{% endif %}" data-post-id="{{ post.id }}">
+                        <div class="post-item {% if not loop.first %}mt-3 pt-3 border-top{% endif %}{% if loop.index > 3 %} d-none extra-post{% endif %}" data-post-id="{{ post.id }}" data-post-index="{{ loop.index }}">
                             <div class="d-flex justify-content-between align-items-center mb-2 post-header">
                                 <div class="d-flex align-items-center gap-2">
                                     <input type="checkbox" class="form-check-input post-select-checkbox d-none" 
@@ -187,6 +187,13 @@
                             </div>
                         </div>
                         {% endfor %}
+                        {% if posts|length > 3 %}
+                        <div class="text-center mt-3 pt-3 border-top show-more-container">
+                            <button class="btn btn-sm btn-outline-secondary show-more-btn" onclick="toggleShowMore(this, '{{ platform }}')">
+                                Show {{ posts|length - 3 }} more posts ▼
+                            </button>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -532,6 +539,26 @@ function deletePost(postId, btn) {
     .catch(error => {
         alert('Error: ' + error.message);
     });
+}
+
+function toggleShowMore(btn, platform) {
+    const body = btn.closest('.social-copy-body');
+    const extraPosts = body.querySelectorAll('.extra-post');
+    const isExpanded = btn.dataset.expanded === 'true';
+    
+    if (isExpanded) {
+        // Collapse - hide extra posts
+        extraPosts.forEach(post => post.classList.add('d-none'));
+        btn.innerHTML = `Show ${extraPosts.length} more posts ▼`;
+        btn.dataset.expanded = 'false';
+        // Scroll to the platform card
+        body.closest('.social-copy-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+        // Expand - show all posts
+        extraPosts.forEach(post => post.classList.remove('d-none'));
+        btn.innerHTML = `Show less ▲`;
+        btn.dataset.expanded = 'true';
+    }
 }
 
 function clearAllPosts() {
