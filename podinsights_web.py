@@ -53,6 +53,11 @@ from database import (
     get_linkedin_token,
     delete_linkedin_token,
     update_linkedin_token,
+    # Threads token functions
+    save_threads_token,
+    get_threads_token,
+    delete_threads_token,
+    update_threads_token,
     # Scheduled posts functions
     add_scheduled_post,
     get_scheduled_post,
@@ -89,6 +94,12 @@ from linkedin_client import (
     get_linkedin_client,
     calculate_token_expiry,
     is_token_expired,
+)
+from threads_client import (
+    ThreadsClient,
+    get_threads_client,
+    calculate_token_expiry as threads_calculate_token_expiry,
+    is_token_expired as threads_is_token_expired,
 )
 
 app = Flask(__name__)
@@ -1672,6 +1683,228 @@ def linkedin_post_social(post_id: int):
 
 
 # ============================================================================
+# Threads Integration Routes
+# ============================================================================
+
+
+@app.route('/threads/status')
+def threads_status():
+    """Check Threads connection status."""
+    client = get_threads_client()
+    token = get_threads_token()
+    
+    if not client.is_configured():
+        return jsonify({
+            "connected": False,
+            "configured": False,
+            "message": "Threads credentials not configured. Set THREADS_APP_ID and THREADS_APP_SECRET.",
+        })
+    
+    if not token:
+        return jsonify({
+            "connected": False,
+            "configured": True,
+            "message": "Not connected to Threads",
+        })
+    
+    # Check if token is expired
+    if threads_is_token_expired(token['expires_at']):
+        # Try to refresh the token
+        try:
+            new_token = client.refresh_access_token(token['access_token'])
+            expires_at = threads_calculate_token_expiry(new_token.get('expires_in', 5184000))
+            update_threads_token(
+                access_token=new_token['access_token'],
+                expires_at=expires_at,
+            )
+            return jsonify({
+                "connected": True,
+                "configured": True,
+                "username": token['username'],
+                "display_name": token['display_name'],
+                "profile_picture_url": token['profile_picture_url'],
+                "message": "Connected (token refreshed)",
+            })
+        except Exception as e:
+            app.logger.warning("Failed to refresh Threads token: %s", e)
+            return jsonify({
+                "connected": False,
+                "configured": True,
+                "message": "Token expired. Please reconnect.",
+            })
+    
+    return jsonify({
+        "connected": True,
+        "configured": True,
+        "username": token['username'],
+        "display_name": token['display_name'],
+        "profile_picture_url": token['profile_picture_url'],
+        "user_id": token['user_id'],
+    })
+
+
+@app.route('/threads/auth')
+def threads_auth():
+    """Start Threads OAuth flow."""
+    client = get_threads_client()
+    
+    if not client.is_configured():
+        return jsonify({"error": "Threads not configured"}), 400
+    
+    auth_url, state = client.get_authorization_url()
+    session['threads_oauth_state'] = state
+    
+    return redirect(auth_url)
+
+
+@app.route('/threads/callback')
+def threads_callback():
+    """Handle Threads OAuth callback."""
+    error = request.args.get('error')
+    if error:
+        error_desc = request.args.get('error_description', 'Unknown error')
+        app.logger.error("Threads OAuth error: %s - %s", error, error_desc)
+        return render_template(
+            'article_error.html',
+            error=f"Threads authorization failed: {error_desc}",
+        )
+    
+    code = request.args.get('code')
+    state = request.args.get('state')
+    
+    # Verify state to prevent CSRF
+    stored_state = session.pop('threads_oauth_state', None)
+    if not stored_state or stored_state != state:
+        app.logger.warning("Threads OAuth state mismatch")
+        return render_template(
+            'article_error.html',
+            error="Security verification failed. Please try again.",
+        )
+    
+    if not code:
+        return render_template(
+            'article_error.html',
+            error="No authorization code received from Threads.",
+        )
+    
+    client = get_threads_client()
+    
+    try:
+        # Step 1: Exchange code for short-lived token
+        token_data = client.exchange_code_for_token(code)
+        short_lived_token = token_data['access_token']
+        user_id = token_data.get('user_id', '')
+        
+        # Step 2: Exchange for long-lived token (60 days)
+        long_lived_data = client.get_long_lived_token(short_lived_token)
+        access_token = long_lived_data['access_token']
+        expires_in = long_lived_data.get('expires_in', 5184000)  # Default 60 days
+        
+        # Calculate expiry
+        expires_at = threads_calculate_token_expiry(expires_in)
+        
+        # Get user profile
+        user_info = client.get_user_profile(access_token)
+        
+        if user_info:
+            user_id = user_info.get('id', user_id)
+            username = user_info.get('username', '')
+            display_name = user_info.get('name', '') or username
+            profile_picture_url = user_info.get('threads_profile_picture_url', '')
+        else:
+            username = ''
+            display_name = 'Threads User'
+            profile_picture_url = ''
+        
+        # Save token
+        save_threads_token(
+            access_token=access_token,
+            expires_at=expires_at,
+            user_id=user_id,
+            username=username,
+            display_name=display_name,
+            profile_picture_url=profile_picture_url,
+        )
+        
+        app.logger.info("Threads connected for user: @%s", username)
+        
+        # Redirect to schedule page with success message
+        return redirect(url_for('schedule_list') + '?threads=connected')
+        
+    except Exception as e:
+        app.logger.exception("Threads OAuth exchange failed")
+        return render_template(
+            'article_error.html',
+            error=f"Failed to connect to Threads: {str(e)}",
+        )
+
+
+@app.route('/threads/disconnect', methods=['POST'])
+def threads_disconnect():
+    """Disconnect Threads account."""
+    delete_threads_token()
+    return jsonify({"success": True, "message": "Threads disconnected"})
+
+
+@app.route('/threads/post/<int:post_id>', methods=['POST'])
+def threads_post_social(post_id: int):
+    """Post a social media post to Threads immediately."""
+    post = get_social_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    # Check if this is a Threads post
+    if post['platform'] != 'threads':
+        return jsonify({"error": "This post is not for Threads"}), 400
+    
+    # Get Threads token
+    token = get_threads_token()
+    if not token:
+        return jsonify({"error": "Threads not connected. Please connect your account first."}), 401
+    
+    # Check if token is expired and try to refresh
+    if threads_is_token_expired(token['expires_at']):
+        client = get_threads_client()
+        try:
+            new_token = client.refresh_access_token(token['access_token'])
+            expires_at = threads_calculate_token_expiry(new_token.get('expires_in', 5184000))
+            update_threads_token(
+                access_token=new_token['access_token'],
+                expires_at=expires_at,
+            )
+            token = get_threads_token()
+        except Exception as e:
+            app.logger.warning("Failed to refresh Threads token: %s", e)
+            return jsonify({"error": "Threads token expired. Please reconnect."}), 401
+    
+    client = get_threads_client()
+    
+    try:
+        result = client.publish_text_post(
+            access_token=token['access_token'],
+            text=post['content'],
+        )
+        
+        if result['success']:
+            # Mark the post as used
+            mark_social_post_used(post_id, True)
+            return jsonify({
+                "success": True,
+                "post_id": result.get('post_id'),
+                "message": "Posted to Threads successfully!",
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": result.get('error', 'Unknown error'),
+            }), 400
+            
+    except Exception as e:
+        app.logger.exception("Failed to post to Threads")
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================================
 # Scheduled Posts Routes
 # ============================================================================
 
@@ -1684,6 +1917,7 @@ def schedule_add():
     social_post_id = request.form.get('social_post_id', type=int)
     article_id = request.form.get('article_id', type=int)
     use_queue = request.form.get('use_queue') == '1'  # Auto-schedule to next available slot
+    platform = request.form.get('platform', 'linkedin')  # Platform: 'linkedin' or 'threads'
     
     # If using queue, get the next available time slot
     if use_queue or not scheduled_for:
@@ -1716,7 +1950,7 @@ def schedule_add():
             post_type=post_type,
             social_post_id=social_post_id,
             article_id=article_id,
-            platform='linkedin',
+            platform=platform,
         )
         
         # Format the display time
@@ -1767,6 +2001,10 @@ def schedule_list():
     token = get_linkedin_token()
     linkedin_connected = token is not None and not is_token_expired(token['expires_at']) if token else False
     
+    # Check Threads connection status
+    threads_token = get_threads_token()
+    threads_connected = threads_token is not None and not threads_is_token_expired(threads_token['expires_at']) if threads_token else False
+    
     # Get configured time slots
     time_slots = list_time_slots()
     time_slots_list = []
@@ -1794,6 +2032,7 @@ def schedule_list():
         scheduled_posts=scheduled,
         status_filter=status_filter,
         linkedin_connected=linkedin_connected,
+        threads_connected=threads_connected,
         time_slots=time_slots_list,
         next_slot=next_slot,
         next_slot_display=next_slot_display,
@@ -2025,57 +2264,22 @@ def scheduled_post_worker() -> None:
             if not pending:
                 continue
             
-            # Get LinkedIn token
-            token = get_linkedin_token()
-            if not token:
-                app.logger.warning("Scheduled posts due but LinkedIn not connected")
-                continue
-            
-            if is_token_expired(token['expires_at']):
-                # Try to refresh
-                client = get_linkedin_client()
-                if token['refresh_token']:
-                    try:
-                        new_token = client.refresh_access_token(token['refresh_token'])
-                        expires_at = calculate_token_expiry(new_token.get('expires_in', 5184000))
-                        update_linkedin_token(
-                            access_token=new_token['access_token'],
-                            expires_at=expires_at,
-                            refresh_token=new_token.get('refresh_token'),
-                        )
-                        token = get_linkedin_token()
-                    except Exception as e:
-                        app.logger.error("Failed to refresh token for scheduled posts: %s", e)
-                        continue
-                else:
-                    app.logger.warning("LinkedIn token expired, cannot process scheduled posts")
-                    continue
-            
-            client = get_linkedin_client()
+            # Cache tokens to avoid repeated DB queries
+            linkedin_token = None
+            threads_token = None
             
             for post in pending:
                 try:
+                    platform = post.get('platform', 'linkedin')
+                    
                     # Get article topic safely from sqlite3.Row
                     article_topic = post['article_topic'] if 'article_topic' in post.keys() else None
                     
+                    # Determine content
                     if post['post_type'] == 'social' and post['social_content']:
-                        # Use smart post to auto-detect URLs for link previews
-                        # Pass the article topic as fallback title for rich link previews
-                        result = client.create_smart_post(
-                            access_token=token['access_token'],
-                            author_urn=token['user_urn'],
-                            text=post['social_content'],
-                            article_title=article_topic,
-                        )
+                        content = post['social_content']
                     elif post['post_type'] == 'article' and post['article_content']:
-                        # Post article as text with smart URL detection
-                        text = f"{post['article_topic']}\n\n{post['article_content'][:2800]}"
-                        result = client.create_smart_post(
-                            access_token=token['access_token'],
-                            author_urn=token['user_urn'],
-                            text=text[:3000],
-                            article_title=article_topic,
-                        )
+                        content = f"{post['article_topic']}\n\n{post['article_content'][:2800]}"
                     else:
                         app.logger.warning("Scheduled post %d has no content", post['id'])
                         update_scheduled_post_status(
@@ -2085,24 +2289,135 @@ def scheduled_post_worker() -> None:
                         )
                         continue
                     
-                    if result['success']:
-                        update_scheduled_post_status(
-                            post['id'],
-                            status='posted',
-                            linkedin_post_urn=result.get('post_urn'),
+                    result = None
+                    
+                    if platform == 'threads':
+                        # Handle Threads posting
+                        if threads_token is None:
+                            threads_token = get_threads_token()
+                        
+                        if not threads_token:
+                            app.logger.warning("Scheduled Threads post %d due but Threads not connected", post['id'])
+                            update_scheduled_post_status(
+                                post['id'],
+                                status='failed',
+                                error_message='Threads not connected',
+                            )
+                            continue
+                        
+                        # Check token expiry and refresh if needed
+                        if threads_is_token_expired(threads_token['expires_at']):
+                            threads_client = get_threads_client()
+                            try:
+                                new_token = threads_client.refresh_access_token(threads_token['access_token'])
+                                expires_at = threads_calculate_token_expiry(new_token.get('expires_in', 5184000))
+                                update_threads_token(
+                                    access_token=new_token['access_token'],
+                                    expires_at=expires_at,
+                                )
+                                threads_token = get_threads_token()
+                            except Exception as e:
+                                app.logger.error("Failed to refresh Threads token: %s", e)
+                                update_scheduled_post_status(
+                                    post['id'],
+                                    status='failed',
+                                    error_message='Threads token expired',
+                                )
+                                continue
+                        
+                        threads_client = get_threads_client()
+                        result = threads_client.publish_text_post(
+                            access_token=threads_token['access_token'],
+                            text=content[:500],  # Threads has 500 char limit
                         )
-                        # Mark social post as used if applicable
-                        if post['social_post_id']:
-                            mark_social_post_used(post['social_post_id'], True)
-                        app.logger.info("Scheduled post %d published successfully", post['id'])
+                        
+                        if result['success']:
+                            update_scheduled_post_status(
+                                post['id'],
+                                status='posted',
+                                linkedin_post_urn=result.get('post_id'),  # Reuse field for Threads post ID
+                            )
+                            if post['social_post_id']:
+                                mark_social_post_used(post['social_post_id'], True)
+                            app.logger.info("Scheduled Threads post %d published successfully", post['id'])
+                        else:
+                            error_msg = str(result.get('error', 'Unknown error'))[:500]
+                            update_scheduled_post_status(
+                                post['id'],
+                                status='failed',
+                                error_message=error_msg,
+                            )
+                            app.logger.error("Scheduled Threads post %d failed: %s", post['id'], error_msg)
+                    
                     else:
-                        error_msg = str(result.get('error', 'Unknown error'))[:500]
-                        update_scheduled_post_status(
-                            post['id'],
-                            status='failed',
-                            error_message=error_msg,
+                        # Handle LinkedIn posting (default)
+                        if linkedin_token is None:
+                            linkedin_token = get_linkedin_token()
+                        
+                        if not linkedin_token:
+                            app.logger.warning("Scheduled LinkedIn post %d due but LinkedIn not connected", post['id'])
+                            update_scheduled_post_status(
+                                post['id'],
+                                status='failed',
+                                error_message='LinkedIn not connected',
+                            )
+                            continue
+                        
+                        # Check token expiry and refresh if needed
+                        if is_token_expired(linkedin_token['expires_at']):
+                            linkedin_client = get_linkedin_client()
+                            if linkedin_token['refresh_token']:
+                                try:
+                                    new_token = linkedin_client.refresh_access_token(linkedin_token['refresh_token'])
+                                    expires_at = calculate_token_expiry(new_token.get('expires_in', 5184000))
+                                    update_linkedin_token(
+                                        access_token=new_token['access_token'],
+                                        expires_at=expires_at,
+                                        refresh_token=new_token.get('refresh_token'),
+                                    )
+                                    linkedin_token = get_linkedin_token()
+                                except Exception as e:
+                                    app.logger.error("Failed to refresh LinkedIn token: %s", e)
+                                    update_scheduled_post_status(
+                                        post['id'],
+                                        status='failed',
+                                        error_message='LinkedIn token expired',
+                                    )
+                                    continue
+                            else:
+                                app.logger.warning("LinkedIn token expired for post %d", post['id'])
+                                update_scheduled_post_status(
+                                    post['id'],
+                                    status='failed',
+                                    error_message='LinkedIn token expired',
+                                )
+                                continue
+                        
+                        linkedin_client = get_linkedin_client()
+                        result = linkedin_client.create_smart_post(
+                            access_token=linkedin_token['access_token'],
+                            author_urn=linkedin_token['user_urn'],
+                            text=content[:3000],
+                            article_title=article_topic,
                         )
-                        app.logger.error("Scheduled post %d failed: %s", post['id'], error_msg)
+                        
+                        if result['success']:
+                            update_scheduled_post_status(
+                                post['id'],
+                                status='posted',
+                                linkedin_post_urn=result.get('post_urn'),
+                            )
+                            if post['social_post_id']:
+                                mark_social_post_used(post['social_post_id'], True)
+                            app.logger.info("Scheduled LinkedIn post %d published successfully", post['id'])
+                        else:
+                            error_msg = str(result.get('error', 'Unknown error'))[:500]
+                            update_scheduled_post_status(
+                                post['id'],
+                                status='failed',
+                                error_message=error_msg,
+                            )
+                            app.logger.error("Scheduled LinkedIn post %d failed: %s", post['id'], error_msg)
                         
                 except Exception as e:
                     app.logger.exception("Error processing scheduled post %d", post['id'])

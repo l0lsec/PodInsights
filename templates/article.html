@@ -159,10 +159,20 @@
                                     <button class="btn btn-outline-info linkedin-post-btn" onclick="postToLinkedIn({{ post.id }}, this)" title="Post to LinkedIn Now" data-post-id="{{ post.id }}">
                                         💼
                                     </button>
-                                    <button class="btn btn-outline-success" onclick="addToQueue({{ post.id }}, 'social', this)" title="Add to Queue">
+                                    <button class="btn btn-outline-success" onclick="addToQueue({{ post.id }}, 'social', 'linkedin', this)" title="Add to Queue">
                                         ➕
                                     </button>
-                                    <button class="btn btn-outline-warning" onclick="openScheduleModal({{ post.id }}, 'social')" title="Schedule for Specific Time">
+                                    <button class="btn btn-outline-warning" onclick="openScheduleModal({{ post.id }}, 'social', 'linkedin')" title="Schedule for Specific Time">
+                                        📅
+                                    </button>
+                                    {% elif platform == 'threads' %}
+                                    <button class="btn btn-outline-dark threads-post-btn" onclick="postToThreads({{ post.id }}, this)" title="Post to Threads Now" data-post-id="{{ post.id }}">
+                                        🧵
+                                    </button>
+                                    <button class="btn btn-outline-success" onclick="addToQueue({{ post.id }}, 'social', 'threads', this)" title="Add to Queue">
+                                        ➕
+                                    </button>
+                                    <button class="btn btn-outline-warning" onclick="openScheduleModal({{ post.id }}, 'social', 'threads')" title="Schedule for Specific Time">
                                         📅
                                     </button>
                                     {% endif %}
@@ -813,6 +823,89 @@ document.addEventListener('DOMContentLoaded', function() {
     checkLinkedInStatus();
 });
 
+// ============================================================================
+// Threads Integration Functions
+// ============================================================================
+
+let threadsConnected = false;
+
+// Check Threads connection status on page load
+document.addEventListener('DOMContentLoaded', function() {
+    checkThreadsStatus();
+});
+
+function checkThreadsStatus() {
+    fetch('{{ url_for("threads_status") }}')
+        .then(response => response.json())
+        .then(data => {
+            threadsConnected = data.connected;
+        })
+        .catch(error => {
+            console.error('Error checking Threads status:', error);
+        });
+}
+
+function postToThreads(postId, btn) {
+    if (!threadsConnected) {
+        alert('Please connect Threads first. Go to Schedule page to connect.');
+        return;
+    }
+    
+    if (!confirm('Post this to Threads now?')) return;
+    
+    const originalHtml = btn.innerHTML;
+    btn.innerHTML = '⏳';
+    btn.disabled = true;
+    
+    fetch(`/threads/post/${postId}`, { method: 'POST' })
+        .then(response => response.json().then(data => ({ ok: response.ok, data })))
+        .then(({ ok, data }) => {
+            if (data.success) {
+                btn.innerHTML = '✅';
+                btn.classList.remove('btn-outline-dark');
+                btn.classList.add('btn-success');
+                
+                // Update the "used" badge
+                const postItem = btn.closest('.post-item');
+                const usedBadge = postItem.querySelector('.used-badge');
+                if (!usedBadge) {
+                    const badgeContainer = postItem.querySelector('.d-flex.align-items-center.gap-2');
+                    const newBadge = document.createElement('span');
+                    newBadge.className = 'badge bg-success used-badge';
+                    newBadge.textContent = '✓ Used';
+                    badgeContainer.appendChild(newBadge);
+                }
+                
+                // Add Threads posted badge
+                const threadsBadge = document.createElement('span');
+                threadsBadge.className = 'badge ms-1';
+                threadsBadge.style.backgroundColor = '#000000';
+                threadsBadge.textContent = '🧵 Posted';
+                btn.parentNode.insertBefore(threadsBadge, btn.nextSibling);
+                
+                setTimeout(() => {
+                    btn.innerHTML = '🧵';
+                    btn.disabled = false;
+                }, 2000);
+            } else {
+                btn.innerHTML = '❌';
+                alert('Failed to post: ' + (data.error ? JSON.stringify(data.error) : 'Unknown error'));
+                setTimeout(() => {
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }, 2000);
+            }
+        })
+        .catch(error => {
+            btn.innerHTML = '❌';
+            alert('Error: ' + error.message);
+            setTimeout(() => {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+            }, 2000);
+        });
+}
+
 function checkLinkedInStatus() {
     fetch('{{ url_for("linkedin_status") }}')
         .then(response => response.json())
@@ -971,13 +1064,21 @@ function postToLinkedIn(postId, btn) {
         });
 }
 
-function addToQueue(postId, postType, btn) {
-    if (!linkedinConnected) {
+function addToQueue(postId, postType, platform, btn) {
+    platform = platform || 'linkedin';
+    
+    if (platform === 'linkedin' && !linkedinConnected) {
         alert('Please connect LinkedIn first');
         return;
     }
     
-    if (!confirm('Add this post to the scheduling queue? It will be posted at the next available time slot.')) {
+    if (platform === 'threads' && !threadsConnected) {
+        alert('Please connect Threads first. Go to Schedule page to connect.');
+        return;
+    }
+    
+    const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
+    if (!confirm(`Add this post to the ${platformName} scheduling queue? It will be posted at the next available time slot.`)) {
         return;
     }
     
@@ -988,6 +1089,7 @@ function addToQueue(postId, postType, btn) {
     const formData = new FormData();
     formData.append('post_type', postType);
     formData.append('use_queue', '1');
+    formData.append('platform', platform);
     if (postType === 'social') {
         formData.append('social_post_id', postId);
     } else if (postType === 'article') {
@@ -1007,7 +1109,7 @@ function addToQueue(postId, postType, btn) {
             
             // Show a nice notification with the scheduled time
             const scheduledTime = data.scheduled_for_display || data.scheduled_for;
-            alert(`Post added to queue!\n\nScheduled for: ${scheduledTime}`);
+            alert(`Post added to ${platformName} queue!\n\nScheduled for: ${scheduledTime}`);
         } else {
             btn.innerHTML = originalHtml;
             btn.disabled = false;
@@ -1021,14 +1123,26 @@ function addToQueue(postId, postType, btn) {
     });
 }
 
-function openScheduleModal(postId, postType) {
-    if (!linkedinConnected) {
+function openScheduleModal(postId, postType, platform) {
+    platform = platform || 'linkedin';
+    
+    if (platform === 'linkedin' && !linkedinConnected) {
         alert('Please connect LinkedIn first');
+        return;
+    }
+    
+    if (platform === 'threads' && !threadsConnected) {
+        alert('Please connect Threads first. Go to Schedule page to connect.');
         return;
     }
     
     document.getElementById('schedule-post-id').value = postId;
     document.getElementById('schedule-post-type').value = postType;
+    document.getElementById('schedule-platform').value = platform;
+    
+    // Update modal title to show platform
+    const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
+    document.getElementById('schedule-modal-title').textContent = `📅 Schedule ${platformName} Post`;
     
     // Set default datetime to 1 hour from now
     const now = new Date();
@@ -1043,6 +1157,7 @@ function openScheduleModal(postId, postType) {
 function submitSchedule() {
     const postId = document.getElementById('schedule-post-id').value;
     const postType = document.getElementById('schedule-post-type').value;
+    const platform = document.getElementById('schedule-platform').value || 'linkedin';
     const datetime = document.getElementById('schedule-datetime').value;
     
     if (!datetime) {
@@ -1057,6 +1172,7 @@ function submitSchedule() {
     const formData = new FormData();
     formData.append('post_type', postType);
     formData.append('scheduled_for', utcDatetime);
+    formData.append('platform', platform);
     if (postType === 'social') {
         formData.append('social_post_id', postId);
     } else {
@@ -1088,12 +1204,13 @@ function submitSchedule() {
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header" style="background: linear-gradient(135deg, #0077B5 0%, #005885 100%); color: white;">
-                <h5 class="modal-title">📅 Schedule LinkedIn Post</h5>
+                <h5 class="modal-title" id="schedule-modal-title">📅 Schedule Post</h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <input type="hidden" id="schedule-post-id">
                 <input type="hidden" id="schedule-post-type">
+                <input type="hidden" id="schedule-platform" value="linkedin">
                 
                 <div class="mb-3">
                     <label class="form-label fw-bold">Schedule Date & Time</label>

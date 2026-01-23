@@ -117,6 +117,22 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
+        # Threads OAuth tokens storage
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS threads_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                access_token TEXT,
+                expires_at TEXT,
+                user_id TEXT,
+                username TEXT,
+                display_name TEXT,
+                profile_picture_url TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
         # Scheduled posts queue for LinkedIn and other platforms
         conn.execute(
             """
@@ -916,6 +932,111 @@ def update_linkedin_member_urn(
         )
         conn.commit()
         return True
+
+
+# --- Threads Token Functions ---
+
+
+def save_threads_token(
+    access_token: str,
+    expires_at: str,
+    user_id: str,
+    username: str,
+    display_name: str | None = None,
+    profile_picture_url: str | None = None,
+    db_path: str = DB_PATH,
+) -> int:
+    """Save or update Threads OAuth tokens. Returns the token record id."""
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with sqlite3.connect(db_path) as conn:
+        # Check if we already have a token (single user mode)
+        cur = conn.execute("SELECT id FROM threads_tokens LIMIT 1")
+        existing = cur.fetchone()
+
+        if existing:
+            # Update existing token
+            conn.execute(
+                """
+                UPDATE threads_tokens SET
+                    access_token = ?,
+                    expires_at = ?,
+                    user_id = ?,
+                    username = ?,
+                    display_name = ?,
+                    profile_picture_url = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    access_token,
+                    expires_at,
+                    user_id,
+                    username,
+                    display_name,
+                    profile_picture_url,
+                    now,
+                    existing[0],
+                ),
+            )
+            conn.commit()
+            return existing[0]
+        else:
+            # Insert new token
+            cur = conn.execute(
+                """
+                INSERT INTO threads_tokens
+                    (access_token, expires_at, user_id, username,
+                     display_name, profile_picture_url, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    access_token,
+                    expires_at,
+                    user_id,
+                    username,
+                    display_name,
+                    profile_picture_url,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+
+def get_threads_token(db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
+    """Get the stored Threads token (single user mode)."""
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("SELECT * FROM threads_tokens LIMIT 1")
+        return cur.fetchone()
+
+
+def delete_threads_token(db_path: str = DB_PATH) -> None:
+    """Delete all Threads tokens (disconnect)."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM threads_tokens")
+        conn.commit()
+
+
+def update_threads_token(
+    access_token: str,
+    expires_at: str,
+    db_path: str = DB_PATH,
+) -> None:
+    """Update the access token after a refresh."""
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE threads_tokens SET
+                access_token = ?,
+                expires_at = ?,
+                updated_at = ?
+            """,
+            (access_token, expires_at, now),
+        )
+        conn.commit()
 
 
 # --- Scheduled Posts Functions ---
