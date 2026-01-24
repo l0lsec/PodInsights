@@ -2115,6 +2115,7 @@ def schedule_list():
         'schedule.html',
         scheduled_posts=scheduled,
         status_filter=status_filter,
+        platform_filter=platform_filter,
         linkedin_connected=linkedin_connected,
         threads_connected=threads_connected,
         time_slots=time_slots_list,
