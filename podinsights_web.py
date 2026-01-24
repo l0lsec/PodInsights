@@ -2132,6 +2132,29 @@ def schedule_cancel(scheduled_id: int):
         return jsonify({"error": "Could not cancel post (may already be posted or cancelled)"}), 400
 
 
+@app.route('/schedule/remove-from-queue', methods=['POST'])
+def schedule_remove_from_queue():
+    """Remove a post from queue by its source post ID (social or standalone) and platform."""
+    from database import cancel_scheduled_post_by_source
+    
+    post_type = request.form.get('post_type', '')  # 'social' or 'standalone'
+    post_id = request.form.get('post_id', type=int)
+    platform = request.form.get('platform', 'linkedin')
+    
+    if not post_type or not post_id:
+        return jsonify({"error": "post_type and post_id are required"}), 400
+    
+    if post_type not in ['social', 'standalone']:
+        return jsonify({"error": "Invalid post_type"}), 400
+    
+    success = cancel_scheduled_post_by_source(post_type, post_id, platform)
+    
+    if success:
+        return jsonify({"success": True, "message": f"Removed from {platform} queue"})
+    else:
+        return jsonify({"error": "Post not found in queue"}), 400
+
+
 @app.route('/schedule/<int:scheduled_id>/delete', methods=['POST'])
 def schedule_delete(scheduled_id: int):
     """Delete a scheduled post."""
@@ -2346,6 +2369,36 @@ def schedule_delete_selected():
         "success": True,
         "message": f"Deleted {count} post{'s' if count != 1 else ''}"
     })
+
+
+@app.route('/schedule/reorder', methods=['POST'])
+def schedule_reorder():
+    """Reorder pending scheduled posts by swapping their scheduled times."""
+    from database import reorder_scheduled_posts
+    
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    post_ids = data.get('post_ids', [])
+    
+    if not post_ids or len(post_ids) < 2:
+        return jsonify({"error": "At least 2 post IDs required"}), 400
+    
+    try:
+        post_ids = [int(pid) for pid in post_ids]
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid post IDs"}), 400
+    
+    success = reorder_scheduled_posts(post_ids)
+    
+    if success:
+        return jsonify({
+            "success": True,
+            "message": f"Reordered {len(post_ids)} posts"
+        })
+    else:
+        return jsonify({"error": "Failed to reorder posts"}), 500
 
 
 @app.route('/schedule/<int:scheduled_id>/edit', methods=['POST'])

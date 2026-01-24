@@ -1348,6 +1348,57 @@ def redistribute_scheduled_posts(platform: str, db_path: str = DB_PATH) -> int:
     return redistributed
 
 
+def reorder_scheduled_posts(post_ids: List[int], db_path: str = DB_PATH) -> bool:
+    """Reorder pending scheduled posts by swapping their scheduled times.
+    
+    Takes a list of post IDs in the desired new order. The scheduled_for times
+    are preserved but reassigned based on the new order.
+    
+    Args:
+        post_ids: List of scheduled post IDs in the desired order
+        db_path: Database path
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not post_ids or len(post_ids) < 2:
+        return True  # Nothing to reorder
+    
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        
+        # Get current scheduled times for all provided post IDs
+        placeholders = ",".join("?" for _ in post_ids)
+        cur = conn.execute(
+            f"""
+            SELECT id, scheduled_for FROM scheduled_posts
+            WHERE id IN ({placeholders}) AND status = 'pending'
+            ORDER BY scheduled_for ASC
+            """,
+            post_ids,
+        )
+        rows = cur.fetchall()
+        
+        if len(rows) < 2:
+            return True  # Not enough posts to reorder
+        
+        # Get the times in chronological order (these are the slots we'll keep)
+        times_in_order = sorted([row['scheduled_for'] for row in rows])
+        
+        # Now assign each post_id (in the new order) to a time slot (in chronological order)
+        # This way, the first post in the user's new order gets the earliest time, etc.
+        for i, post_id in enumerate(post_ids):
+            if i < len(times_in_order):
+                conn.execute(
+                    "UPDATE scheduled_posts SET scheduled_for = ? WHERE id = ? AND status = 'pending'",
+                    (times_in_order[i], post_id),
+                )
+        
+        conn.commit()
+    
+    return True
+
+
 def update_scheduled_post_status(
     scheduled_id: int,
     status: str,
@@ -1385,6 +1436,44 @@ def cancel_scheduled_post(scheduled_id: int, db_path: str = DB_PATH) -> bool:
             """,
             (scheduled_id,),
         )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def cancel_scheduled_post_by_source(
+    post_type: str,
+    post_id: int,
+    platform: str,
+    db_path: str = DB_PATH,
+) -> bool:
+    """Cancel a pending scheduled post by its source post ID and platform.
+    
+    Args:
+        post_type: 'social' or 'standalone'
+        post_id: The social_post_id or standalone_post_id
+        platform: 'linkedin' or 'threads'
+        
+    Returns True if a post was cancelled.
+    """
+    with sqlite3.connect(db_path) as conn:
+        if post_type == 'social':
+            cur = conn.execute(
+                """
+                UPDATE scheduled_posts SET status = 'cancelled'
+                WHERE social_post_id = ? AND platform = ? AND status = 'pending'
+                """,
+                (post_id, platform),
+            )
+        elif post_type == 'standalone':
+            cur = conn.execute(
+                """
+                UPDATE scheduled_posts SET status = 'cancelled'
+                WHERE standalone_post_id = ? AND platform = ? AND status = 'pending'
+                """,
+                (post_id, platform),
+            )
+        else:
+            return False
         conn.commit()
         return cur.rowcount > 0
 

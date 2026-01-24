@@ -2,6 +2,26 @@
 {% block title %}Scheduled Posts | PodInsights{% endblock %}
 {% block header %}Scheduled Posts{% endblock %}
 {% block content %}
+<style>
+/* Drag-and-drop styling */
+.sortable-ghost {
+    opacity: 0.4;
+    background-color: #e3f2fd !important;
+}
+.sortable-chosen {
+    background-color: #bbdefb !important;
+}
+.sortable-drag {
+    background-color: #fff;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.drag-handle:hover {
+    color: #0d6efd !important;
+}
+tr.not-draggable .drag-handle {
+    cursor: not-allowed !important;
+}
+</style>
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{{ url_for('index') }}">Home</a></li>
@@ -268,6 +288,7 @@
             <table class="table table-hover">
                 <thead>
                     <tr>
+                        <th style="width: 30px;" title="Drag to reorder">⋮⋮</th>
                         <th style="width: 40px;">
                             <input type="checkbox" class="form-check-input" id="select-all" onchange="toggleSelectAll(this)">
                         </th>
@@ -279,9 +300,12 @@
                         <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="schedule-tbody">
                     {% for post in scheduled_posts %}
-                    <tr>
+                    <tr data-post-id="{{ post.id }}" data-scheduled-for="{{ post.scheduled_for }}" class="{% if post.status != 'pending' %}not-draggable{% endif %}">
+                        <td class="drag-handle" style="cursor: {% if post.status == 'pending' %}grab{% else %}not-allowed{% endif %}; text-align: center; color: {% if post.status == 'pending' %}#6c757d{% else %}#dee2e6{% endif %};">
+                            {% if post.status == 'pending' %}⋮⋮{% else %}&nbsp;{% endif %}
+                        </td>
                         <td>
                             <input type="checkbox" class="form-check-input post-checkbox" 
                                    data-post-id="{{ post.id }}" onchange="updateSelectedCount()">
@@ -484,6 +508,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 <script>
 // Check connection status on load
 document.addEventListener('DOMContentLoaded', function() {
@@ -491,7 +516,72 @@ document.addEventListener('DOMContentLoaded', function() {
     checkThreadsStatus();
     // Auto-refresh next slots to ensure they're current
     refreshNextSlots();
+    
+    // Initialize drag-and-drop sorting for the schedule queue
+    initSortable();
 });
+
+// Initialize SortableJS for queue reordering
+function initSortable() {
+    const tbody = document.getElementById('schedule-tbody');
+    if (!tbody) return;
+    
+    new Sortable(tbody, {
+        animation: 150,
+        handle: '.drag-handle',
+        filter: '.not-draggable',
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        dragClass: 'sortable-drag',
+        onMove: function(evt) {
+            // Prevent dragging onto non-draggable rows
+            return !evt.related.classList.contains('not-draggable');
+        },
+        onEnd: function(evt) {
+            // Only process if position actually changed
+            if (evt.oldIndex === evt.newIndex) return;
+            
+            // Get all pending post IDs in new order
+            const rows = tbody.querySelectorAll('tr:not(.not-draggable)');
+            const pendingPostIds = Array.from(rows).map(row => parseInt(row.dataset.postId));
+            
+            if (pendingPostIds.length > 1) {
+                reorderQueue(pendingPostIds);
+            }
+        }
+    });
+}
+
+// Reorder queue by sending new order to backend
+function reorderQueue(postIds) {
+    // Show loading indicator
+    const tbody = document.getElementById('schedule-tbody');
+    tbody.style.opacity = '0.5';
+    
+    fetch('/schedule/reorder', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ post_ids: postIds }),
+    })
+    .then(response => response.json())
+    .then(data => {
+        tbody.style.opacity = '1';
+        if (data.success) {
+            // Reload to show updated times
+            location.reload();
+        } else {
+            alert('Failed to reorder: ' + (data.error || 'Unknown error'));
+            location.reload(); // Reload to restore original order
+        }
+    })
+    .catch(error => {
+        tbody.style.opacity = '1';
+        alert('Error reordering queue: ' + error.message);
+        location.reload();
+    });
+}
 
 // Refresh next available slots display
 function refreshNextSlots() {
