@@ -597,8 +597,8 @@ function refreshNextSlots() {
         .then(response => response.json())
         .then(data => {
             if (linkedinSpan) {
-                if (data.next_slot_display) {
-                    linkedinSpan.textContent = data.next_slot_display;
+                if (data.available && data.display) {
+                    linkedinSpan.textContent = data.display;
                 } else {
                     linkedinSpan.innerHTML = '<span class="text-muted">No slots available</span>';
                 }
@@ -613,8 +613,8 @@ function refreshNextSlots() {
         .then(response => response.json())
         .then(data => {
             if (threadsSpan) {
-                if (data.next_slot_display) {
-                    threadsSpan.textContent = data.next_slot_display;
+                if (data.available && data.display) {
+                    threadsSpan.textContent = data.display;
                 } else {
                     threadsSpan.innerHTML = '<span class="text-muted">No slots available</span>';
                 }

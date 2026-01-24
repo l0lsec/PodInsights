@@ -2046,11 +2046,15 @@ def schedule_add():
 def schedule_list():
     """View all scheduled posts."""
     status_filter = request.args.get('status', '')
+    platform_filter = request.args.get('platform', '')
     
     # Initialize default time slots if none exist
     initialize_default_time_slots()
     
-    posts = list_scheduled_posts(status=status_filter if status_filter else None)
+    posts = list_scheduled_posts(
+        status=status_filter if status_filter else None,
+        platform=platform_filter if platform_filter else None,
+    )
     
     # Convert to list of dicts and format dates
     scheduled = []
