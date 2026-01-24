@@ -140,6 +140,7 @@ def init_db(db_path: str = DB_PATH) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 social_post_id INTEGER,
                 article_id INTEGER,
+                standalone_post_id INTEGER,
                 post_type TEXT,
                 platform TEXT DEFAULT 'linkedin',
                 scheduled_for TEXT,
@@ -149,10 +150,16 @@ def init_db(db_path: str = DB_PATH) -> None:
                 created_at TEXT,
                 posted_at TEXT,
                 FOREIGN KEY(social_post_id) REFERENCES social_posts(id),
-                FOREIGN KEY(article_id) REFERENCES articles(id)
+                FOREIGN KEY(article_id) REFERENCES articles(id),
+                FOREIGN KEY(standalone_post_id) REFERENCES standalone_posts(id)
             )
             """
         )
+        # Upgrade scheduled_posts table to include standalone_post_id if missing
+        cur = conn.execute("PRAGMA table_info(scheduled_posts)")
+        sched_columns = [row[1] for row in cur.fetchall()]
+        if "standalone_post_id" not in sched_columns:
+            conn.execute("ALTER TABLE scheduled_posts ADD COLUMN standalone_post_id INTEGER")
         # Schedule settings for configurable time slots
         conn.execute(
             """
@@ -182,6 +189,35 @@ def init_db(db_path: str = DB_PATH) -> None:
             CREATE TABLE IF NOT EXISTS platform_daily_limits (
                 platform TEXT PRIMARY KEY,
                 max_posts_per_day INTEGER DEFAULT 0
+            )
+            """
+        )
+        # Standalone posts for the Command Center (not tied to articles)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS standalone_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type TEXT,
+                source_content TEXT,
+                platform TEXT,
+                content TEXT,
+                created_at TEXT,
+                used INTEGER DEFAULT 0
+            )
+            """
+        )
+        # URL sources - stores extracted content from URLs for reuse
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS url_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT UNIQUE,
+                title TEXT,
+                description TEXT,
+                content TEXT,
+                og_image TEXT,
+                created_at TEXT,
+                last_used_at TEXT
             )
             """
         )
@@ -1056,6 +1092,7 @@ def add_scheduled_post(
     post_type: str,
     social_post_id: int | None = None,
     article_id: int | None = None,
+    standalone_post_id: int | None = None,
     platform: str = "linkedin",
     status: str = "pending",
     linkedin_post_urn: str | None = None,
@@ -1068,11 +1105,11 @@ def add_scheduled_post(
         cur = conn.execute(
             """
             INSERT INTO scheduled_posts
-                (social_post_id, article_id, post_type, platform, scheduled_for,
+                (social_post_id, article_id, standalone_post_id, post_type, platform, scheduled_for,
                  status, linkedin_post_urn, created_at, posted_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (social_post_id, article_id, post_type, platform, scheduled_for, 
+            (social_post_id, article_id, standalone_post_id, post_type, platform, scheduled_for, 
              status, linkedin_post_urn, created_at, posted_at),
         )
         conn.commit()
@@ -1088,10 +1125,12 @@ def get_scheduled_post(scheduled_id: int, db_path: str = DB_PATH) -> Optional[sq
             SELECT sp.*, 
                    soc.content AS social_content, soc.platform AS social_platform,
                    a.topic AS article_topic, a.content AS article_content,
-                   a.episode_id
+                   a.episode_id,
+                   st.content AS standalone_content, st.platform AS standalone_platform
             FROM scheduled_posts sp
             LEFT JOIN social_posts soc ON sp.social_post_id = soc.id
             LEFT JOIN articles a ON sp.article_id = a.id
+            LEFT JOIN standalone_posts st ON sp.standalone_post_id = st.id
             WHERE sp.id = ?
             """,
             (scheduled_id,),
@@ -1131,7 +1170,38 @@ def get_pending_schedules_for_social_posts(social_post_ids: List[int], db_path: 
                 'scheduled_for': row['scheduled_for'],
             })
         return result
-        return cur.fetchone()
+
+
+def get_pending_schedules_for_standalone_posts(standalone_post_ids: List[int], db_path: str = DB_PATH) -> dict:
+    """Get pending scheduled posts for a list of standalone post IDs.
+    
+    Returns a dict mapping standalone_post_id -> {platform: scheduled_for}
+    """
+    if not standalone_post_ids:
+        return {}
+    
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        placeholders = ",".join("?" for _ in standalone_post_ids)
+        cur = conn.execute(
+            f"""
+            SELECT standalone_post_id, platform, scheduled_for
+            FROM scheduled_posts
+            WHERE standalone_post_id IN ({placeholders})
+            AND status = 'pending'
+            ORDER BY scheduled_for ASC
+            """,
+            standalone_post_ids,
+        )
+        
+        result = {}
+        for row in cur.fetchall():
+            post_id = row['standalone_post_id']
+            if post_id not in result:
+                result[post_id] = {}
+            # Store as platform -> scheduled_for dict for easy lookup
+            result[post_id][row['platform']] = row['scheduled_for']
+        return result
 
 
 def list_scheduled_posts(
@@ -1145,10 +1215,12 @@ def list_scheduled_posts(
         query = """
             SELECT sp.*, 
                    soc.content AS social_content, soc.platform AS social_platform,
-                   a.topic AS article_topic, a.content AS article_content
+                   a.topic AS article_topic, a.content AS article_content,
+                   st.content AS standalone_content, st.platform AS standalone_platform
             FROM scheduled_posts sp
             LEFT JOIN social_posts soc ON sp.social_post_id = soc.id
             LEFT JOIN articles a ON sp.article_id = a.id
+            LEFT JOIN standalone_posts st ON sp.standalone_post_id = st.id
             WHERE 1=1
         """
         params = []
@@ -1166,8 +1238,11 @@ def list_scheduled_posts(
 
 
 def get_pending_scheduled_posts(db_path: str = DB_PATH) -> List[sqlite3.Row]:
-    """Get all pending scheduled posts that are due (scheduled_for <= now)."""
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    """Get all pending scheduled posts that are due (scheduled_for <= now).
+    
+    Uses local time since time slots are configured in local time by users.
+    """
+    now = datetime.now().isoformat(timespec="seconds")
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.execute(
@@ -1175,10 +1250,12 @@ def get_pending_scheduled_posts(db_path: str = DB_PATH) -> List[sqlite3.Row]:
             SELECT sp.*, 
                    soc.content AS social_content, soc.platform AS social_platform,
                    a.topic AS article_topic, a.content AS article_content,
-                   a.episode_id
+                   a.episode_id,
+                   st.content AS standalone_content, st.platform AS standalone_platform
             FROM scheduled_posts sp
             LEFT JOIN social_posts soc ON sp.social_post_id = soc.id
             LEFT JOIN articles a ON sp.article_id = a.id
+            LEFT JOIN standalone_posts st ON sp.standalone_post_id = st.id
             WHERE sp.status = 'pending' AND sp.scheduled_for <= ?
             ORDER BY sp.scheduled_for ASC
             """,
@@ -1644,3 +1721,304 @@ def count_scheduled_posts_for_day(platform: str, date_str: str, db_path: str = D
             (platform, date_str),
         )
         return cur.fetchone()[0]
+
+
+# =============================================================================
+# Standalone Posts Functions (Command Center)
+# =============================================================================
+
+
+def add_standalone_post(
+    source_type: str,
+    source_content: str,
+    platform: str,
+    content: str,
+    db_path: str = DB_PATH,
+) -> int:
+    """Save a standalone post (not tied to an article) and return its id.
+    
+    Args:
+        source_type: 'freeform', 'url', or 'text'
+        source_content: The original prompt, URL, or text used to generate
+        platform: Target platform (e.g., 'linkedin', 'threads', 'twitter')
+        content: The generated post content
+        
+    Returns:
+        The ID of the newly created post
+    """
+    created_at = datetime.utcnow().isoformat(timespec="seconds")
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO standalone_posts (source_type, source_content, platform, content, created_at, used)
+            VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (source_type, source_content, platform, content, created_at),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def list_standalone_posts(
+    source_type: Optional[str] = None,
+    platform: Optional[str] = None,
+    db_path: str = DB_PATH,
+) -> List[sqlite3.Row]:
+    """List standalone posts, optionally filtered by source type and/or platform.
+    
+    Args:
+        source_type: Optional filter by source type ('freeform', 'url', 'text')
+        platform: Optional filter by platform
+        
+    Returns:
+        List of standalone post rows
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        
+        conditions = []
+        params = []
+        
+        if source_type:
+            conditions.append("source_type = ?")
+            params.append(source_type)
+        if platform:
+            conditions.append("platform = ?")
+            params.append(platform)
+        
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+        
+        cur = conn.execute(
+            f"""
+            SELECT * FROM standalone_posts
+            {where_clause}
+            ORDER BY created_at DESC
+            """,
+            params,
+        )
+        return cur.fetchall()
+
+
+def get_standalone_post(post_id: int, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
+    """Retrieve a single standalone post by its id.
+    
+    Args:
+        post_id: The post ID
+        
+    Returns:
+        The post row or None if not found
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT * FROM standalone_posts WHERE id = ?",
+            (post_id,),
+        )
+        return cur.fetchone()
+
+
+def update_standalone_post(post_id: int, content: str, db_path: str = DB_PATH) -> None:
+    """Update the content of a standalone post.
+    
+    Args:
+        post_id: The post ID
+        content: New content for the post
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE standalone_posts SET content = ? WHERE id = ?",
+            (content, post_id),
+        )
+        conn.commit()
+
+
+def delete_standalone_post(post_id: int, db_path: str = DB_PATH) -> None:
+    """Delete a standalone post by its id.
+    
+    Args:
+        post_id: The post ID to delete
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM standalone_posts WHERE id = ?", (post_id,))
+        conn.commit()
+
+
+def delete_standalone_posts_bulk(post_ids: List[int], db_path: str = DB_PATH) -> int:
+    """Delete multiple standalone posts. Returns count deleted.
+    
+    Args:
+        post_ids: List of post IDs to delete
+        
+    Returns:
+        Number of posts deleted
+    """
+    if not post_ids:
+        return 0
+    placeholders = ",".join("?" * len(post_ids))
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            f"DELETE FROM standalone_posts WHERE id IN ({placeholders})",
+            post_ids,
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def mark_standalone_post_used(post_id: int, used: bool = True, db_path: str = DB_PATH) -> None:
+    """Mark a standalone post as used or unused.
+    
+    Args:
+        post_id: The post ID
+        used: True to mark as used, False to mark as unused
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE standalone_posts SET used = ? WHERE id = ?",
+            (1 if used else 0, post_id),
+        )
+        conn.commit()
+
+
+# =============================================================================
+# URL Sources CRUD Functions
+# =============================================================================
+
+def add_url_source(
+    url: str,
+    title: str,
+    description: str,
+    content: str,
+    og_image: Optional[str] = None,
+    db_path: str = DB_PATH,
+) -> int:
+    """Save extracted URL content for future reuse.
+    
+    If the URL already exists, updates the existing record.
+    
+    Args:
+        url: The source URL
+        title: Page title
+        description: Meta description or og:description
+        content: Extracted body text content
+        og_image: Open Graph image URL (optional)
+        
+    Returns:
+        The id of the inserted or updated record
+    """
+    created_at = datetime.utcnow().isoformat()
+    with sqlite3.connect(db_path) as conn:
+        # Check if URL already exists
+        cur = conn.execute("SELECT id FROM url_sources WHERE url = ?", (url,))
+        existing = cur.fetchone()
+        
+        if existing:
+            # Update existing record
+            conn.execute(
+                """
+                UPDATE url_sources 
+                SET title = ?, description = ?, content = ?, og_image = ?, last_used_at = ?
+                WHERE id = ?
+                """,
+                (title, description, content, og_image, created_at, existing[0]),
+            )
+            conn.commit()
+            return existing[0]
+        else:
+            # Insert new record
+            cur = conn.execute(
+                """
+                INSERT INTO url_sources (url, title, description, content, og_image, created_at, last_used_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (url, title, description, content, og_image, created_at, created_at),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+
+def list_url_sources(db_path: str = DB_PATH) -> List[sqlite3.Row]:
+    """List all saved URL sources, ordered by last used date.
+    
+    Returns:
+        List of url_sources rows
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            """
+            SELECT * FROM url_sources
+            ORDER BY last_used_at DESC
+            """
+        )
+        return cur.fetchall()
+
+
+def get_url_source(source_id: int, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
+    """Get a single URL source by ID.
+    
+    Args:
+        source_id: The source ID
+        
+    Returns:
+        The url_sources row or None if not found
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT * FROM url_sources WHERE id = ?",
+            (source_id,),
+        )
+        return cur.fetchone()
+
+
+def get_url_source_by_url(url: str, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
+    """Get a URL source by its URL.
+    
+    Args:
+        url: The source URL
+        
+    Returns:
+        The url_sources row or None if not found
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT * FROM url_sources WHERE url = ?",
+            (url,),
+        )
+        return cur.fetchone()
+
+
+def delete_url_source(source_id: int, db_path: str = DB_PATH) -> bool:
+    """Delete a URL source by ID.
+    
+    Args:
+        source_id: The source ID to delete
+        
+    Returns:
+        True if a row was deleted, False otherwise
+    """
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM url_sources WHERE id = ?",
+            (source_id,),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def update_url_source_last_used(source_id: int, db_path: str = DB_PATH) -> None:
+    """Update the last_used_at timestamp for a URL source.
+    
+    Args:
+        source_id: The source ID
+    """
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE url_sources SET last_used_at = ? WHERE id = ?",
+            (now, source_id),
+        )
+        conn.commit()

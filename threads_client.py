@@ -235,7 +235,62 @@ class ThreadsClient:
                     "error": {"message": "No container ID returned"},
                 }
 
-            # Step 2: Publish the container
+            # Step 2: Poll container status until FINISHED
+            # The Threads API needs time to process the container before publishing
+            import time
+            max_retries = 10
+            poll_interval = 0.5  # seconds
+            
+            for attempt in range(max_retries):
+                status_params = {
+                    "fields": "status,error_message",
+                    "access_token": access_token,
+                }
+                status_response = requests.get(
+                    f"{THREADS_API_HOST}/{container_id}",
+                    params=status_params,
+                    timeout=10,
+                )
+                
+                if status_response.status_code == 200:
+                    status_data = status_response.json()
+                    container_status = status_data.get("status")
+                    
+                    if container_status == "FINISHED":
+                        logger.debug("Container %s is ready (attempt %d)", container_id, attempt + 1)
+                        break
+                    elif container_status == "ERROR":
+                        error_msg = status_data.get("error_message", "Container processing failed")
+                        logger.error("Container %s failed: %s", container_id, error_msg)
+                        return {
+                            "success": False,
+                            "error": {"message": error_msg},
+                        }
+                    elif container_status == "EXPIRED":
+                        logger.error("Container %s expired", container_id)
+                        return {
+                            "success": False,
+                            "error": {"message": "Container expired before publishing"},
+                        }
+                    elif container_status == "PUBLISHED":
+                        logger.warning("Container %s already published", container_id)
+                        return {
+                            "success": False,
+                            "error": {"message": "Container already published"},
+                        }
+                    else:
+                        # IN_PROGRESS or other status, wait and retry
+                        logger.debug("Container %s status: %s, waiting...", container_id, container_status)
+                        time.sleep(poll_interval)
+                else:
+                    logger.warning("Failed to check container status: %s", status_response.status_code)
+                    time.sleep(poll_interval)
+            else:
+                # Exhausted retries
+                logger.warning("Container %s not ready after %d attempts, attempting publish anyway", 
+                             container_id, max_retries)
+
+            # Step 3: Publish the container
             publish_params = {
                 "creation_id": container_id,
                 "access_token": access_token,

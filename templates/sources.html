@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block title %}Saved Sources | PodInsights{% endblock %}
+{% block header %}Saved Sources{% endblock %}
+{% block content %}
+<style>
+    .source-card {
+        border: 1px solid #dee2e6;
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+        background: white;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    .source-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        transform: translateY(-2px);
+    }
+    .source-thumbnail {
+        width: 120px;
+        height: 80px;
+        object-fit: cover;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 2rem;
+        flex-shrink: 0;
+    }
+    .source-thumbnail img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: 8px;
+    }
+    .source-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #212529;
+        margin-bottom: 0.25rem;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+    .source-url {
+        font-size: 0.8rem;
+        color: #6c757d;
+        text-decoration: none;
+        display: block;
+        margin-bottom: 0.5rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .source-url:hover {
+        color: #0d6efd;
+    }
+    .source-description {
+        font-size: 0.9rem;
+        color: #495057;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        margin-bottom: 0.5rem;
+    }
+    .source-meta {
+        font-size: 0.75rem;
+        color: #6c757d;
+    }
+    .source-actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        border-radius: 12px;
+        margin-top: 2rem;
+    }
+    .empty-state h3 {
+        color: #495057;
+        margin-bottom: 1rem;
+    }
+    .empty-state p {
+        color: #6c757d;
+        margin-bottom: 1.5rem;
+    }
+    .page-header {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    }
+    .page-header h2 {
+        margin: 0;
+        font-weight: 700;
+        background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    .page-header p {
+        margin: 0.5rem 0 0 0;
+        opacity: 0.8;
+    }
+</style>
+
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('index') }}">Home</a></li>
+        <li class="breadcrumb-item active" aria-current="page">Sources</li>
+    </ol>
+</nav>
+
+<div class="page-header">
+    <h2>📚 Saved URL Sources</h2>
+    <p>Content extracted from URLs, saved for generating more posts</p>
+</div>
+
+{% if sources %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <span class="results-count">
+        <strong>{{ sources|length }}</strong> saved source{% if sources|length != 1 %}s{% endif %}
+    </span>
+</div>
+
+<div class="sources-list">
+    {% for source in sources %}
+    <div class="source-card" data-source-id="{{ source.id }}">
+        <div class="d-flex gap-3">
+            <div class="source-thumbnail">
+                {% if source.og_image %}
+                <img src="{{ source.og_image }}" alt="Preview" onerror="this.style.display='none'; this.parentElement.innerHTML='🔗';">
+                {% else %}
+                🔗
+                {% endif %}
+            </div>
+            <div class="flex-grow-1">
+                <h5 class="source-title">{{ source.title or 'Untitled' }}</h5>
+                <a href="{{ source.url }}" target="_blank" rel="noopener" class="source-url">
+                    {{ source.url }}
+                </a>
+                {% if source.description %}
+                <p class="source-description">{{ source.description }}</p>
+                {% endif %}
+                <div class="source-meta">
+                    <span title="Created">📅 Saved: {{ source.created_at[:10] if source.created_at else 'Unknown' }}</span>
+                    {% if source.last_used_at %}
+                    <span class="ms-3" title="Last used">🕐 Last used: {{ source.last_used_at[:10] }}</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="source-actions align-self-center">
+                <a href="{{ url_for('compose_page') }}?source_id={{ source.id }}" 
+                   class="btn btn-sm btn-primary" title="Generate posts from this source">
+                    ✨ Generate Posts
+                </a>
+                <button type="button" class="btn btn-sm btn-outline-secondary" 
+                        onclick="viewSourceDetails({{ source.id }})" title="View full content">
+                    👁️ View
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger" 
+                        onclick="confirmDeleteSource({{ source.id }}, '{{ source.title|e }}')" title="Delete">
+                    🗑️
+                </button>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <h3>📭 No Saved Sources Yet</h3>
+    <p>When you generate posts from URLs in the Command Center, the extracted content will be saved here for reuse.</p>
+    <a href="{{ url_for('compose_page') }}" class="btn btn-primary">
+        ✨ Go to Command Center
+    </a>
+</div>
+{% endif %}
+
+<!-- Source Details Modal -->
+<div class="modal fade" id="sourceDetailsModal" tabindex="-1" aria-labelledby="sourceDetailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="sourceDetailsModalLabel">Source Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="sourceDetailsContent">
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <a href="#" id="generateFromSourceBtn" class="btn btn-primary">✨ Generate Posts</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Delete Source</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete "<strong id="deleteSourceTitle"></strong>"?</p>
+                <p class="text-muted small">This will remove the saved content but won't affect any posts already generated from it.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn" onclick="deleteSource()">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let deleteSourceId = null;
+
+function viewSourceDetails(sourceId) {
+    const modal = new bootstrap.Modal(document.getElementById('sourceDetailsModal'));
+    const contentDiv = document.getElementById('sourceDetailsContent');
+    const generateBtn = document.getElementById('generateFromSourceBtn');
+    
+    // Show loading state
+    contentDiv.innerHTML = `
+        <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    `;
+    
+    generateBtn.href = "{{ url_for('compose_page') }}?source_id=" + sourceId;
+    
+    modal.show();
+    
+    // Fetch source details
+    fetch(`/sources/${sourceId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                contentDiv.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+                return;
+            }
+            
+            contentDiv.innerHTML = `
+                <div class="mb-3">
+                    <label class="form-label fw-bold">URL</label>
+                    <p><a href="${data.url}" target="_blank" rel="noopener">${data.url}</a></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Title</label>
+                    <p>${data.title || '<em>No title</em>'}</p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Description</label>
+                    <p>${data.description || '<em>No description</em>'}</p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Extracted Content</label>
+                    <div style="max-height: 300px; overflow-y: auto; background: #f8f9fa; padding: 1rem; border-radius: 8px; font-size: 0.9rem;">
+                        ${data.content ? data.content.substring(0, 2000) + (data.content.length > 2000 ? '...' : '') : '<em>No content extracted</em>'}
+                    </div>
+                </div>
+                ${data.og_image ? `
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Preview Image</label>
+                    <div><img src="${data.og_image}" alt="Preview" style="max-width: 300px; border-radius: 8px;"></div>
+                </div>
+                ` : ''}
+            `;
+        })
+        .catch(err => {
+            contentDiv.innerHTML = `<div class="alert alert-danger">Failed to load source details</div>`;
+        });
+}
+
+function confirmDeleteSource(sourceId, title) {
+    deleteSourceId = sourceId;
+    document.getElementById('deleteSourceTitle').textContent = title || 'this source';
+    const modal = new bootstrap.Modal(document.getElementById('deleteModal'));
+    modal.show();
+}
+
+function deleteSource() {
+    if (!deleteSourceId) return;
+    
+    fetch(`/sources/${deleteSourceId}`, { method: 'DELETE' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Remove the card from the page
+                const card = document.querySelector(`[data-source-id="${deleteSourceId}"]`);
+                if (card) {
+                    card.remove();
+                }
+                // Close modal
+                bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
+                
+                // Check if no sources left
+                const remainingCards = document.querySelectorAll('.source-card');
+                if (remainingCards.length === 0) {
+                    location.reload();
+                }
+            } else {
+                alert(data.error || 'Failed to delete source');
+            }
+        })
+        .catch(err => {
+            alert('Failed to delete source');
+        });
+}
+</script>
+{% endblock %}

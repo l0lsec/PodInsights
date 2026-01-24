@@ -85,6 +85,22 @@ from database import (
     get_all_daily_limits,
     # Queue redistribution
     redistribute_scheduled_posts,
+    # Standalone posts functions (Command Center)
+    add_standalone_post,
+    list_standalone_posts,
+    get_standalone_post,
+    update_standalone_post,
+    delete_standalone_post,
+    delete_standalone_posts_bulk,
+    mark_standalone_post_used,
+    # URL sources functions
+    add_url_source,
+    list_url_sources,
+    get_url_source,
+    delete_url_source,
+    update_url_source_last_used,
+    # Standalone post scheduling
+    get_pending_schedules_for_standalone_posts,
 )
 from podinsights import (
     transcribe_audio,
@@ -95,6 +111,10 @@ from podinsights import (
     generate_article,
     generate_social_copy,
     refine_article,
+    # Command Center functions
+    generate_posts_from_prompt,
+    generate_posts_from_url,
+    generate_posts_from_text,
 )
 from linkedin_client import (
     LinkedInClient,
@@ -2135,6 +2155,8 @@ def schedule_post_now(scheduled_id: int):
     # Get content
     if post['post_type'] == 'social' and post['social_content']:
         content = post['social_content']
+    elif post['post_type'] == 'standalone' and post['standalone_content']:
+        content = post['standalone_content']
     elif post['post_type'] == 'article' and post['article_content']:
         content = f"{post['article_topic']}\n\n{post['article_content'][:2800]}"
     else:
@@ -2160,11 +2182,18 @@ def schedule_post_now(scheduled_id: int):
                 update_scheduled_post_status(
                     scheduled_id,
                     status='posted',
-                    posted_at=datetime.now().isoformat(timespec='seconds'),
                     linkedin_post_urn=result.get('permalink'),
                 )
                 if post['social_post_id']:
                     mark_social_post_used(post['social_post_id'], True)
+                if post['standalone_post_id']:
+                    mark_standalone_post_used(post['standalone_post_id'], True)
+                
+                # If posted before scheduled time, redistribute remaining posts to fill the gap
+                scheduled_time = datetime.fromisoformat(post['scheduled_for'])
+                if datetime.now() < scheduled_time:
+                    redistribute_scheduled_posts(platform)
+                
                 return jsonify({"success": True, "message": "Posted to Threads!"})
             else:
                 error_msg = result.get('error', 'Unknown error') if result else 'No response'
@@ -2187,11 +2216,18 @@ def schedule_post_now(scheduled_id: int):
                 update_scheduled_post_status(
                     scheduled_id,
                     status='posted',
-                    posted_at=datetime.now().isoformat(timespec='seconds'),
                     linkedin_post_urn=result.get('post_urn'),
                 )
                 if post['social_post_id']:
                     mark_social_post_used(post['social_post_id'], True)
+                if post['standalone_post_id']:
+                    mark_standalone_post_used(post['standalone_post_id'], True)
+                
+                # If posted before scheduled time, redistribute remaining posts to fill the gap
+                scheduled_time = datetime.fromisoformat(post['scheduled_for'])
+                if datetime.now() < scheduled_time:
+                    redistribute_scheduled_posts(platform)
+                
                 return jsonify({"success": True, "message": "Posted to LinkedIn!"})
             else:
                 error_msg = result.get('error', 'Unknown error') if result else 'No response'
@@ -2258,7 +2294,6 @@ def schedule_retry(scheduled_id: int):
             update_scheduled_post_status(
                 scheduled_id,
                 status='posted',
-                posted_at=datetime.now().isoformat(timespec='seconds'),
                 linkedin_post_urn=result.get('post_urn'),
             )
             return jsonify({"success": True, "message": "Post successful!"})
@@ -2561,6 +2596,606 @@ def schedule_next_slot():
     })
 
 
+@app.route('/schedule/debug', methods=['GET'])
+def schedule_debug():
+    """Debug endpoint to check time slots and scheduling state."""
+    import sqlite3
+    from database import get_enabled_time_slots, list_time_slots
+    
+    # Get all time slots (enabled and disabled)
+    all_slots = list_time_slots()
+    enabled_slots = get_enabled_time_slots()
+    
+    # Get current server time info
+    now = datetime.now()
+    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    
+    # Get next available slots
+    next_linkedin = get_next_available_slot('linkedin')
+    next_threads = get_next_available_slot('threads')
+    
+    # Get pending scheduled posts
+    with sqlite3.connect('pod_insights.db') as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            """
+            SELECT id, scheduled_for, platform, status 
+            FROM scheduled_posts 
+            WHERE status = 'pending'
+            ORDER BY scheduled_for ASC
+            LIMIT 10
+            """
+        )
+        pending_posts = [dict(row) for row in cur.fetchall()]
+    
+    return jsonify({
+        "server_time": {
+            "now": now.isoformat(),
+            "display": now.strftime('%A, %B %d, %Y at %I:%M:%S %p'),
+            "day_of_week": now.weekday(),
+            "day_name": day_names[now.weekday()],
+        },
+        "time_slots": {
+            "all_count": len(all_slots),
+            "enabled_count": len(enabled_slots),
+            "all": [{"id": s['id'], "day_of_week": s['day_of_week'], "time_slot": s['time_slot'], "enabled": s['enabled']} for s in all_slots],
+            "enabled": [{"id": s['id'], "day_of_week": s['day_of_week'], "time_slot": s['time_slot']} for s in enabled_slots],
+        },
+        "next_available": {
+            "linkedin": next_linkedin,
+            "threads": next_threads,
+        },
+        "pending_posts": pending_posts,
+    })
+
+
+# ============================================================================
+# Command Center Routes
+# ============================================================================
+
+
+@app.route('/compose')
+def compose_page():
+    """Command Center page for generating social media posts."""
+    # Get existing standalone posts grouped by platform
+    posts = list_standalone_posts()
+    
+    # Get scheduled info for all standalone posts
+    post_ids = [post['id'] for post in posts]
+    scheduled_info = get_pending_schedules_for_standalone_posts(post_ids) if post_ids else {}
+    
+    posts_by_platform = {}
+    for post in posts:
+        platform = post['platform']
+        if platform not in posts_by_platform:
+            posts_by_platform[platform] = []
+        post_dict = dict(post)
+        # Add scheduled info to each post
+        post_dict['scheduled'] = scheduled_info.get(post['id'], {})
+        posts_by_platform[platform].append(post_dict)
+    
+    # Get next available slots for display
+    next_slots = {
+        'linkedin': get_next_available_slot('linkedin'),
+        'threads': get_next_available_slot('threads'),
+    }
+    
+    # Get saved URL sources for the "From Saved Source" tab
+    saved_sources = list_url_sources()
+    
+    # Check if a specific source is requested
+    selected_source_id = request.args.get('source_id', type=int)
+    selected_source = None
+    if selected_source_id:
+        selected_source = get_url_source(selected_source_id)
+    
+    # Check platform connections
+    linkedin_connected = bool(get_linkedin_token())
+    threads_connected = bool(get_threads_token())
+    
+    return render_template(
+        'compose.html',
+        posts_by_platform=posts_by_platform,
+        next_slots=next_slots,
+        saved_sources=saved_sources,
+        selected_source=selected_source,
+        linkedin_connected=linkedin_connected,
+        threads_connected=threads_connected,
+    )
+
+
+@app.route('/compose/generate', methods=['POST'])
+def compose_generate():
+    """Generate social media posts using LLM based on source type."""
+    source_type = request.form.get('source_type', 'freeform')
+    content = request.form.get('content', '').strip()
+    platforms = request.form.getlist('platforms')
+    tone = request.form.get('tone', 'professional')
+    posts_per_platform = request.form.get('posts_per_platform', 1, type=int)
+    extra_context = request.form.get('extra_context', '').strip() or None
+    topic = request.form.get('topic', '').strip() or None
+    
+    if not content:
+        return jsonify({"error": "Content is required"}), 400
+    
+    if not platforms:
+        platforms = ['linkedin', 'threads', 'twitter']
+    
+    posts_per_platform = max(1, min(posts_per_platform, 10))
+    
+    try:
+        # Generate posts based on source type
+        source_data = None
+        if source_type == 'freeform':
+            generated = generate_posts_from_prompt(
+                prompt=content,
+                platforms=platforms,
+                tone=tone,
+                posts_per_platform=posts_per_platform,
+                extra_context=extra_context,
+            )
+        elif source_type == 'url':
+            result = generate_posts_from_url(
+                url=content,
+                platforms=platforms,
+                tone=tone,
+                posts_per_platform=posts_per_platform,
+                extra_context=extra_context,
+            )
+            # New structure: {"posts": {...}, "source_data": {...}}
+            generated = result.get("posts", result)
+            source_data = result.get("source_data")
+            
+            # Auto-save URL content to url_sources
+            if source_data:
+                source_id = add_url_source(
+                    url=source_data.get("url", content),
+                    title=source_data.get("title", ""),
+                    description=source_data.get("description", ""),
+                    content=source_data.get("content", ""),
+                    og_image=source_data.get("og_image"),
+                )
+                source_data["source_id"] = source_id
+        elif source_type == 'text':
+            generated = generate_posts_from_text(
+                text=content,
+                platforms=platforms,
+                tone=tone,
+                topic=topic,
+                posts_per_platform=posts_per_platform,
+                extra_context=extra_context,
+            )
+        else:
+            return jsonify({"error": f"Unknown source type: {source_type}"}), 400
+        
+        # Save generated posts to database
+        saved_posts = {}
+        for platform, post_data in generated.items():
+            if platform == 'raw':
+                # Handle raw response (JSON parsing failed)
+                continue
+            
+            posts_list = post_data if isinstance(post_data, list) else [post_data]
+            saved_posts[platform] = []
+            
+            for post_content in posts_list:
+                post_id = add_standalone_post(
+                    source_type=source_type,
+                    source_content=content[:1000],  # Truncate for storage
+                    platform=platform,
+                    content=post_content,
+                )
+                saved_posts[platform].append({
+                    'id': post_id,
+                    'content': post_content,
+                })
+        
+        response_data = {
+            "success": True,
+            "generated": generated,
+            "saved_posts": saved_posts,
+        }
+        if source_data:
+            response_data["source_data"] = source_data
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        app.logger.exception("Failed to generate posts")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/compose/post/<int:post_id>', methods=['GET'])
+def compose_get_post(post_id: int):
+    """Get a standalone post by ID."""
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    return jsonify(dict(post))
+
+
+@app.route('/compose/post/<int:post_id>/edit', methods=['POST'])
+def compose_edit_post(post_id: int):
+    """Edit a standalone post's content."""
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    new_content = request.form.get('content', '').strip()
+    if not new_content:
+        return jsonify({"error": "Content is required"}), 400
+    
+    update_standalone_post(post_id, new_content)
+    return jsonify({"success": True, "content": new_content})
+
+
+@app.route('/compose/post/<int:post_id>/delete', methods=['POST'])
+def compose_delete_post(post_id: int):
+    """Delete a standalone post."""
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    delete_standalone_post(post_id)
+    return jsonify({"success": True})
+
+
+@app.route('/compose/posts/delete-bulk', methods=['POST'])
+def compose_delete_bulk():
+    """Delete multiple standalone posts."""
+    data = request.get_json()
+    post_ids = data.get('post_ids', [])
+    
+    if not post_ids:
+        return jsonify({"error": "No posts selected"}), 400
+    
+    # Convert to integers
+    post_ids = [int(pid) for pid in post_ids]
+    deleted = delete_standalone_posts_bulk(post_ids)
+    
+    return jsonify({
+        "success": True,
+        "deleted_count": deleted,
+    })
+
+
+@app.route('/compose/post/<int:post_id>/toggle-used', methods=['POST'])
+def compose_toggle_used(post_id: int):
+    """Toggle a standalone post's used status."""
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    new_status = not bool(post['used'])
+    mark_standalone_post_used(post_id, new_status)
+    return jsonify({"success": True, "used": new_status})
+
+
+@app.route('/compose/post/<int:post_id>/linkedin', methods=['POST'])
+def compose_post_to_linkedin(post_id: int):
+    """Post a standalone post to LinkedIn immediately."""
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    # Get LinkedIn token
+    token = get_linkedin_token()
+    if not token:
+        return jsonify({"error": "LinkedIn not connected. Please connect your account first."}), 401
+    
+    # Check if token has user_urn
+    if not token['user_urn']:
+        return jsonify({
+            "error": "LinkedIn account needs configuration. Please configure your Member ID.",
+            "needs_configuration": True,
+        }), 401
+    
+    # Check if token is expired and try to refresh
+    if is_token_expired(token['expires_at']):
+        if token['refresh_token']:
+            client = get_linkedin_client()
+            try:
+                new_token = client.refresh_access_token(token['refresh_token'])
+                update_linkedin_token(
+                    access_token=new_token['access_token'],
+                    expires_at=calculate_token_expiry(new_token.get('expires_in', 3600)),
+                    refresh_token=new_token.get('refresh_token'),
+                )
+                token = get_linkedin_token()
+            except Exception as e:
+                app.logger.warning("Failed to refresh LinkedIn token: %s", e)
+                return jsonify({"error": "LinkedIn token expired. Please reconnect."}), 401
+        else:
+            return jsonify({"error": "LinkedIn token expired. Please reconnect."}), 401
+    
+    client = get_linkedin_client()
+    
+    try:
+        result = client.create_smart_post(
+            access_token=token['access_token'],
+            author_urn=token['user_urn'],
+            text=post['content'],
+        )
+        
+        if result['success']:
+            # Mark the post as used
+            mark_standalone_post_used(post_id, True)
+            
+            # Record in scheduled_posts for history tracking
+            now = datetime.now().isoformat(timespec='seconds')
+            add_scheduled_post(
+                social_post_id=None,  # Not a social_post from articles
+                article_id=None,
+                post_type='standalone',
+                platform='linkedin',
+                scheduled_for=now,
+                status='posted',
+                linkedin_post_urn=result.get('post_urn'),
+            )
+            
+            return jsonify({
+                "success": True,
+                "post_urn": result['post_urn'],
+                "message": "Posted to LinkedIn successfully!",
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": result.get('error', 'Unknown error'),
+            }), 400
+            
+    except Exception as e:
+        app.logger.exception("Failed to post to LinkedIn")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/compose/post/<int:post_id>/threads', methods=['POST'])
+def compose_post_to_threads(post_id: int):
+    """Post a standalone post to Threads immediately."""
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    # Get Threads token
+    token = get_threads_token()
+    if not token:
+        return jsonify({"error": "Threads not connected. Please connect your account first."}), 401
+    
+    # Check if token is expired and try to refresh
+    if threads_is_token_expired(token['expires_at']):
+        client = get_threads_client()
+        try:
+            new_token = client.refresh_access_token(token['access_token'])
+            expires_at = threads_calculate_token_expiry(new_token.get('expires_in', 5184000))
+            update_threads_token(
+                access_token=new_token['access_token'],
+                expires_at=expires_at,
+            )
+            token = get_threads_token()
+        except Exception as e:
+            app.logger.warning("Failed to refresh Threads token: %s", e)
+            return jsonify({"error": "Threads token expired. Please reconnect."}), 401
+    
+    client = get_threads_client()
+    
+    try:
+        result = client.publish_text_post(
+            access_token=token['access_token'],
+            text=post['content'],
+        )
+        
+        if result['success']:
+            # Mark the post as used
+            mark_standalone_post_used(post_id, True)
+            
+            # Record in scheduled_posts for history tracking
+            now = datetime.now().isoformat(timespec='seconds')
+            add_scheduled_post(
+                social_post_id=None,
+                article_id=None,
+                post_type='standalone',
+                platform='threads',
+                scheduled_for=now,
+                status='posted',
+                linkedin_post_urn=result.get('permalink'),  # Store permalink for view link
+            )
+            
+            return jsonify({
+                "success": True,
+                "post_id": result.get('post_id'),
+                "permalink": result.get('permalink'),
+                "message": "Posted to Threads successfully!",
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": result.get('error', 'Unknown error'),
+            }), 400
+            
+    except Exception as e:
+        app.logger.exception("Failed to post to Threads")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/compose/post/<int:post_id>/queue', methods=['POST'])
+def compose_add_to_queue(post_id: int):
+    """Add a standalone post to the schedule queue."""
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    platform = request.form.get('platform', post['platform'])
+    scheduled_for = request.form.get('scheduled_for', '').strip()
+    
+    # Validate platform
+    if platform not in ['linkedin', 'threads']:
+        return jsonify({"error": f"Platform {platform} does not support scheduling yet"}), 400
+    
+    # Use provided scheduled_for or get next available slot
+    if scheduled_for:
+        # Use custom datetime provided by user
+        schedule_time = scheduled_for
+    else:
+        # Get next available slot from queue
+        next_slot = get_next_available_slot(platform)
+        if not next_slot:
+            return jsonify({"error": f"No available time slots for {platform}. Please add time slots first."}), 400
+        schedule_time = next_slot
+    
+    # Create scheduled post entry with standalone_post_id
+    scheduled_id = add_scheduled_post(
+        social_post_id=None,
+        article_id=None,
+        standalone_post_id=post_id,
+        post_type='standalone',
+        platform=platform,
+        scheduled_for=schedule_time,
+        status='pending',
+    )
+    
+    # Format the display time
+    try:
+        dt = datetime.fromisoformat(schedule_time)
+        display = dt.strftime("%A, %b %d at %I:%M %p")
+    except:
+        display = schedule_time
+    
+    return jsonify({
+        "success": True,
+        "scheduled_id": scheduled_id,
+        "scheduled_for": schedule_time,
+        "scheduled_for_display": display,
+        "message": f"Scheduled for {display}",
+    })
+
+
+@app.route('/compose/clear-all', methods=['POST'])
+def compose_clear_all():
+    """Clear all standalone posts."""
+    posts = list_standalone_posts()
+    if not posts:
+        return jsonify({"success": True, "message": "No posts to clear"})
+    
+    post_ids = [p['id'] for p in posts]
+    deleted = delete_standalone_posts_bulk(post_ids)
+    
+    return jsonify({
+        "success": True,
+        "deleted_count": deleted,
+        "message": f"Cleared {deleted} posts",
+    })
+
+
+# ============================================================================
+# URL Sources Management
+# ============================================================================
+
+
+@app.route('/sources')
+def sources_page():
+    """Display saved URL sources."""
+    sources = list_url_sources()
+    return render_template('sources.html', sources=sources)
+
+
+@app.route('/sources/<int:source_id>')
+def get_source(source_id: int):
+    """Get a single URL source by ID."""
+    source = get_url_source(source_id)
+    if not source:
+        return jsonify({"error": "Source not found"}), 404
+    return jsonify(dict(source))
+
+
+@app.route('/sources/<int:source_id>', methods=['DELETE'])
+def delete_source(source_id: int):
+    """Delete a URL source."""
+    source = get_url_source(source_id)
+    if not source:
+        return jsonify({"error": "Source not found"}), 404
+    
+    deleted = delete_url_source(source_id)
+    return jsonify({"success": deleted})
+
+
+@app.route('/compose/generate-from-source', methods=['POST'])
+def compose_generate_from_source():
+    """Generate posts from a saved URL source."""
+    source_id = request.form.get('source_id', type=int)
+    platforms = request.form.getlist('platforms')
+    tone = request.form.get('tone', 'professional')
+    posts_per_platform = request.form.get('posts_per_platform', 1, type=int)
+    extra_context = request.form.get('extra_context', '').strip() or None
+    
+    if not source_id:
+        return jsonify({"error": "Source ID is required"}), 400
+    
+    source = get_url_source(source_id)
+    if not source:
+        return jsonify({"error": "Source not found"}), 404
+    
+    if not platforms:
+        platforms = ['linkedin', 'threads', 'twitter']
+    
+    posts_per_platform = max(1, min(posts_per_platform, 10))
+    
+    try:
+        # Import here to avoid circular dependency
+        from podinsights import generate_posts_from_text
+        
+        # Build context from the saved source
+        source_text = f"TITLE: {source['title']}\n\n"
+        if source['description']:
+            source_text += f"DESCRIPTION: {source['description']}\n\n"
+        source_text += f"CONTENT: {source['content']}\n\n"
+        source_text += f"ORIGINAL URL: {source['url']}"
+        
+        # Generate posts using the saved content
+        generated = generate_posts_from_text(
+            text=source_text,
+            platforms=platforms,
+            tone=tone,
+            topic=source['title'],
+            posts_per_platform=posts_per_platform,
+            extra_context=extra_context,
+        )
+        
+        # Update last_used_at timestamp
+        update_url_source_last_used(source_id)
+        
+        # Save generated posts to database
+        saved_posts = {}
+        for platform, post_data in generated.items():
+            if platform == 'raw':
+                continue
+            
+            posts_list = post_data if isinstance(post_data, list) else [post_data]
+            saved_posts[platform] = []
+            
+            for post_content in posts_list:
+                post_id = add_standalone_post(
+                    source_type='saved_source',
+                    source_content=source['url'][:1000],
+                    platform=platform,
+                    content=post_content,
+                )
+                saved_posts[platform].append({
+                    'id': post_id,
+                    'content': post_content,
+                })
+        
+        return jsonify({
+            "success": True,
+            "generated": generated,
+            "saved_posts": saved_posts,
+            "source_title": source['title'],
+        })
+        
+    except Exception as e:
+        app.logger.exception("Failed to generate posts from source")
+        return jsonify({"error": str(e)}), 500
+
+
 # ============================================================================
 # Background Scheduler Worker
 # ============================================================================
@@ -2592,11 +3227,13 @@ def scheduled_post_worker() -> None:
                     # Get article topic safely from sqlite3.Row
                     article_topic = post['article_topic'] if 'article_topic' in post.keys() else None
                     
-                    # Determine content
+                    # Determine content based on post type
                     if post['post_type'] == 'social' and post['social_content']:
                         content = post['social_content']
                     elif post['post_type'] == 'article' and post['article_content']:
                         content = f"{post['article_topic']}\n\n{post['article_content'][:2800]}"
+                    elif post['post_type'] == 'standalone' and post['standalone_content']:
+                        content = post['standalone_content']
                     else:
                         app.logger.warning("Scheduled post %d has no content", post['id'])
                         update_scheduled_post_status(
@@ -2656,6 +3293,8 @@ def scheduled_post_worker() -> None:
                             )
                             if post['social_post_id']:
                                 mark_social_post_used(post['social_post_id'], True)
+                            if post['standalone_post_id']:
+                                mark_standalone_post_used(post['standalone_post_id'], True)
                             app.logger.info("Scheduled Threads post %d published successfully", post['id'])
                         else:
                             error_msg = str(result.get('error', 'Unknown error'))[:500]
@@ -2726,6 +3365,8 @@ def scheduled_post_worker() -> None:
                             )
                             if post['social_post_id']:
                                 mark_social_post_used(post['social_post_id'], True)
+                            if post['standalone_post_id']:
+                                mark_standalone_post_used(post['standalone_post_id'], True)
                             app.logger.info("Scheduled LinkedIn post %d published successfully", post['id'])
                         else:
                             error_msg = str(result.get('error', 'Unknown error'))[:500]
