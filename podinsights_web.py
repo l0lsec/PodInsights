@@ -244,6 +244,131 @@ def validate_and_clean_image(file_storage):
         raise ValueError(f"Invalid image file: {str(e)}")
 
 
+def save_stock_image_to_library(image_url: str, direct_save: bool = False) -> str:
+    """
+    Save a stock image to the library.
+    
+    If direct_save=True or URL is from Unsplash/Pexels/Pixabay, saves the URL directly
+    to the library without downloading (these services allow hotlinking).
+    
+    Otherwise downloads and re-uploads to Cloudinary or local storage.
+    Returns the saved image URL.
+    """
+    import requests as req
+    import re
+    
+    # Check if this image URL is already in the library
+    existing = list_uploaded_images()
+    for img in existing:
+        # Check if original URL matches (stored in filename or url)
+        if img.get('url') == image_url or image_url in str(img.get('filename', '')):
+            return img['url']
+    
+    # Check if this is a stock image URL that allows hotlinking
+    stock_domains = ['images.unsplash.com', 'unsplash.com', 'pexels.com', 'pixabay.com']
+    is_stock_url = any(domain in image_url for domain in stock_domains)
+    
+    # For stock URLs, save directly to library without downloading
+    if direct_save or is_stock_url:
+        # Extract a meaningful filename from the URL
+        photo_match = re.search(r'photo-([a-zA-Z0-9_-]+)', image_url)
+        if photo_match:
+            filename = f"unsplash_{photo_match.group(1)}"
+        else:
+            filename = f"stock_{uuid.uuid4().hex[:8]}"
+        
+        # Determine storage type based on URL
+        if 'unsplash' in image_url:
+            storage = 'unsplash'
+        elif 'pexels' in image_url:
+            storage = 'pexels'
+        elif 'pixabay' in image_url:
+            storage = 'pixabay'
+        else:
+            storage = 'external'
+        
+        add_uploaded_image(
+            filename=filename,
+            url=image_url,
+            storage=storage,
+            size=0
+        )
+        return image_url
+    
+    # For non-stock URLs, download and re-upload
+    response = req.get(image_url, timeout=30, stream=True)
+    response.raise_for_status()
+    
+    # Get content type to determine extension
+    content_type = response.headers.get('content-type', 'image/jpeg')
+    ext_map = {
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/gif': 'gif',
+        'image/webp': 'webp',
+    }
+    ext = ext_map.get(content_type.split(';')[0].strip(), 'jpg')
+    
+    # Read image data
+    image_data = response.content
+    
+    # Validate and clean the image
+    img_file = io.BytesIO(image_data)
+    try:
+        img = Image.open(img_file)
+        img.verify()
+        img_file.seek(0)
+        img = Image.open(img_file)
+        
+        # Re-encode to strip metadata
+        output = io.BytesIO()
+        save_format = 'JPEG' if ext == 'jpg' else ext.upper()
+        if save_format == 'JPEG':
+            img = img.convert('RGB')
+        img.save(output, format=save_format, optimize=True)
+        output.seek(0)
+        cleaned_bytes = output.read()
+    except Exception as e:
+        raise ValueError(f"Invalid image from stock API: {e}")
+    
+    # Upload to Cloudinary if configured
+    if CLOUDINARY_CONFIGURED:
+        result = cloudinary.uploader.upload(
+            cleaned_bytes,
+            folder="podinsights/stock",
+            resource_type="image"
+        )
+        saved_url = result['secure_url']
+        filename = f"stock_{result['public_id'].split('/')[-1]}"
+        file_size = result.get('bytes', len(cleaned_bytes))
+        
+        add_uploaded_image(
+            filename=filename,
+            url=saved_url,
+            storage='cloudinary',
+            size=file_size
+        )
+        return saved_url
+    
+    # Local storage fallback
+    unique_filename = f"stock_{uuid.uuid4().hex}.{ext}"
+    filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
+    
+    with open(filepath, 'wb') as f:
+        f.write(cleaned_bytes)
+    
+    saved_url = f"/static/uploads/{unique_filename}"
+    
+    add_uploaded_image(
+        filename=unique_filename,
+        url=saved_url,
+        storage='local',
+        size=len(cleaned_bytes)
+    )
+    
+    return saved_url
+
+
 configure_logging()
 init_db()
 
@@ -3216,7 +3341,7 @@ def compose_get_stock_images(post_id: int):
 
 @app.route('/compose/post/<int:post_id>/stock-image', methods=['POST'])
 def compose_apply_stock_image(post_id: int):
-    """Apply a stock image to a post.
+    """Apply a stock image to a post, saving it to the library first.
     ---
     tags:
       - Compose
@@ -3232,6 +3357,9 @@ def compose_apply_stock_image(post_id: int):
           properties:
             image_url:
               type: string
+            save_to_library:
+              type: boolean
+              default: true
     responses:
       200:
         description: Image applied successfully
@@ -3244,12 +3372,22 @@ def compose_apply_stock_image(post_id: int):
     
     data = request.get_json() or {}
     image_url = data.get('image_url', '').strip()
+    save_to_library = data.get('save_to_library', True)
     
     if not image_url:
         return jsonify({"error": "No image URL provided"}), 400
     
-    update_standalone_post_image(post_id, image_url)
-    return jsonify({"success": True, "image_url": image_url})
+    # If save_to_library is true, download and save the stock image
+    saved_url = image_url
+    if save_to_library:
+        try:
+            saved_url = save_stock_image_to_library(image_url)
+        except Exception as e:
+            app.logger.warning(f"Failed to save stock image to library: {e}, using original URL")
+            saved_url = image_url
+    
+    update_standalone_post_image(post_id, saved_url)
+    return jsonify({"success": True, "image_url": saved_url, "saved_to_library": saved_url != image_url})
 
 
 @app.route('/compose/stock-images/search', methods=['GET'])
