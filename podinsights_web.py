@@ -19,6 +19,7 @@ import time
 from html import unescape
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+from flasgger import Swagger
 from database import (
     init_db,
     get_episode,
@@ -145,6 +146,34 @@ from threads_client import (
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
+
+# Configure Swagger/OpenAPI documentation
+swagger_config = {
+    "headers": [],
+    "specs": [
+        {
+            "endpoint": "apispec",
+            "route": "/apispec.json",
+            "rule_filter": lambda rule: True,
+            "model_filter": lambda tag: True,
+        }
+    ],
+    "static_url_path": "/flasgger_static",
+    "swagger_ui": True,
+    "specs_route": "/apidocs/"
+}
+
+swagger_template = {
+    "info": {
+        "title": "PodInsights API",
+        "description": "API for managing podcasts, articles, social media posts, and scheduling",
+        "version": "1.0.0"
+    },
+    "basePath": "/",
+    "schemes": ["http", "https"],
+}
+
+swagger = Swagger(app, config=swagger_config, template=swagger_template)
 
 # Configure image uploads
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads')
@@ -1053,6 +1082,46 @@ def delete_tickets_selected():
         "success": True,
         "message": f"Deleted {count} ticket{'s' if count != 1 else ''}"
     })
+
+
+@app.route('/api/routes')
+def list_api_routes():
+    """List all available API routes.
+    ---
+    tags:
+      - System
+    responses:
+      200:
+        description: List of all API routes with their methods and endpoints
+        schema:
+          type: object
+          properties:
+            routes:
+              type: array
+              items:
+                type: object
+                properties:
+                  endpoint:
+                    type: string
+                  methods:
+                    type: array
+                    items:
+                      type: string
+                  path:
+                    type: string
+            count:
+              type: integer
+    """
+    routes = []
+    for rule in app.url_map.iter_rules():
+        if rule.endpoint != 'static':
+            routes.append({
+                'endpoint': rule.endpoint,
+                'methods': list(rule.methods - {'HEAD', 'OPTIONS'}),
+                'path': str(rule)
+            })
+    routes.sort(key=lambda x: x['path'])
+    return jsonify({'routes': routes, 'count': len(routes)})
 
 
 @app.route('/status')
