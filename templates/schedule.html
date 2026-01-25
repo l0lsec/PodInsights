@@ -273,7 +273,9 @@ tr.not-draggable .drag-handle {
                     <a href="{{ url_for('schedule_list') }}" class="btn btn-sm btn-outline-secondary" title="Clear Filters">✕</a>
                     {% endif %}
                 </form>
-                <span class="badge bg-primary">{{ scheduled_posts|length }} post{% if scheduled_posts|length != 1 %}s{% endif %}</span>
+                <span class="badge" style="background-color: #0077B5;">💼 {{ linkedin_count }}</span>
+                <span class="badge bg-dark">🧵 {{ threads_count }}</span>
+                <span class="badge bg-secondary">{{ scheduled_posts|length }} total</span>
                 <button class="btn btn-sm btn-outline-danger d-none" id="delete-selected-btn" onclick="deleteSelected()">
                     🗑️ Delete Selected (<span id="selected-count">0</span>)
                 </button>

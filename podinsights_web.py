@@ -104,10 +104,13 @@ from database import (
     add_url_source,
     list_url_sources,
     get_url_source,
+    get_url_source_by_url,
     delete_url_source,
     update_url_source_last_used,
+    update_url_source_content,
     # Standalone post scheduling
     get_pending_schedules_for_standalone_posts,
+    get_posted_info_for_standalone_posts,
 )
 from podinsights import (
     transcribe_audio,
@@ -271,10 +274,39 @@ def make_short_description(text: str, limit: int = 200) -> str:
 def fetch_article_content(url: str, timeout: int = 15) -> str:
     """Fetch and extract the main content from an article URL.
     
-    Uses BeautifulSoup to extract readable article text from web pages.
+    Uses trafilatura for robust article extraction, with BeautifulSoup as fallback.
     Returns extracted text or empty string on failure.
     """
+    import trafilatura
+    
+    # Skip non-HTML URLs (audio, video, images, etc.)
+    media_extensions = (
+        '.mp3', '.mp4', '.m4a', '.wav', '.ogg', '.webm', '.avi', '.mov',
+        '.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.pdf', '.zip'
+    )
+    url_lower = url.lower().split('?')[0]  # Remove query params for extension check
+    if url_lower.endswith(media_extensions):
+        app.logger.info("Skipping media URL (not an article): %s", url)
+        return ""
+    
     try:
+        # Try trafilatura first - it's specifically designed for article extraction
+        downloaded = trafilatura.fetch_url(url)
+        
+        if downloaded:
+            content = trafilatura.extract(
+                downloaded,
+                include_comments=False,
+                include_tables=True,
+                favor_precision=True,
+            )
+            if content and len(content) > 200:
+                app.logger.info("Extracted %d chars using trafilatura from: %s", len(content), url)
+                return content
+        
+        # Fallback to BeautifulSoup for non-article pages or if trafilatura fails
+        app.logger.info("Trafilatura extraction insufficient, falling back to BeautifulSoup for: %s", url)
+        
         headers = {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -638,6 +670,10 @@ def view_feed(feed_id: int):
     feed_data = feedparser.parse(feed['url'])
     all_episodes = []
     is_text_feed = True  # Assume text feed, switch to audio if we find enclosures
+    
+    # Audio file extensions to detect
+    audio_extensions = ('.mp3', '.m4a', '.wav', '.ogg', '.aac', '.flac')
+    
     for entry in feed_data.entries:
         # Determine if this is an audio podcast or text feed
         has_audio = bool(entry.get('enclosures'))
@@ -651,6 +687,11 @@ def view_feed(feed_id: int):
             item_type = 'text'
             if not url:
                 continue
+            # Check if the link itself is an audio file (some feeds use link instead of enclosure)
+            url_check = url.lower().split('?')[0]  # Remove query params
+            if url_check.endswith(audio_extensions):
+                is_text_feed = False
+                item_type = 'audio'
         ep_db = get_episode(url)
         status = {
             'transcribed': ep_db is not None and bool(ep_db['transcript']),
@@ -2218,6 +2259,10 @@ def schedule_list():
     # Get Threads username for constructing view URLs (kept for backward compatibility)
     threads_username = threads_token['username'] if threads_token and 'username' in threads_token.keys() else None
     
+    # Count posts by platform
+    linkedin_count = sum(1 for p in scheduled if p.get('platform') == 'linkedin')
+    threads_count = sum(1 for p in scheduled if p.get('platform') == 'threads')
+    
     return render_template(
         'schedule.html',
         scheduled_posts=scheduled,
@@ -2230,6 +2275,8 @@ def schedule_list():
         next_slots=next_slots,
         daily_limits=daily_limits,
         threads_username=threads_username,
+        linkedin_count=linkedin_count,
+        threads_count=threads_count,
     )
 
 
@@ -2852,6 +2899,7 @@ def compose_page():
     # Get scheduled info for all standalone posts
     post_ids = [post['id'] for post in posts]
     scheduled_info = get_pending_schedules_for_standalone_posts(post_ids) if post_ids else {}
+    posted_info = get_posted_info_for_standalone_posts(post_ids) if post_ids else {}
     
     posts_by_platform = {}
     for post in posts:
@@ -2861,6 +2909,8 @@ def compose_page():
         post_dict = dict(post)
         # Add scheduled info to each post
         post_dict['scheduled'] = scheduled_info.get(post['id'], {})
+        # Add posted info (with URL) to each post
+        post_dict['posted'] = posted_info.get(post['id'], {})
         posts_by_platform[platform].append(post_dict)
     
     # Get next available slots for display
@@ -3412,6 +3462,130 @@ def sources_page():
     return render_template('sources.html', sources=sources)
 
 
+@app.route('/sources', methods=['POST'])
+def add_source():
+    """Add a new URL source by extracting content from a URL."""
+    import trafilatura
+    
+    # Accept URL from JSON or form data
+    if request.is_json:
+        url = request.json.get('url', '').strip()
+    else:
+        url = request.form.get('url', '').strip()
+    
+    if not url:
+        return jsonify({"error": "URL is required"}), 400
+    
+    # Basic URL validation
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    
+    # Check if URL already exists
+    existing = get_url_source_by_url(url)
+    if existing:
+        return jsonify({
+            "error": "This URL has already been saved",
+            "existing_id": existing['id']
+        }), 409
+    
+    try:
+        # Fetch the URL content using trafilatura
+        downloaded = trafilatura.fetch_url(url)
+        
+        if not downloaded:
+            return jsonify({"error": "Failed to fetch URL content. Please check the URL is accessible."}), 400
+        
+        # Extract main article content
+        body_content = trafilatura.extract(
+            downloaded,
+            include_comments=False,
+            include_tables=True,
+            favor_precision=True,
+        ) or ""
+        
+        # Extract metadata
+        metadata = trafilatura.extract_metadata(downloaded)
+        
+        title = ""
+        description = ""
+        og_image = None
+        
+        if metadata:
+            title = metadata.title or ""
+            description = metadata.description or ""
+            og_image = metadata.image
+        
+        # Fallback metadata extraction from HTML if needed
+        if not title or not description or not og_image:
+            import re as re_module
+            
+            if not title:
+                title_match = re_module.search(r'<title>([^<]+)</title>', downloaded, re_module.IGNORECASE)
+                if title_match:
+                    title = title_match.group(1).strip()
+                
+                og_title_match = re_module.search(
+                    r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']',
+                    downloaded, re_module.IGNORECASE
+                )
+                if og_title_match:
+                    title = og_title_match.group(1)
+            
+            if not description:
+                # Try og:description
+                og_desc_match = re_module.search(
+                    r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\']+)["\']',
+                    downloaded, re_module.IGNORECASE
+                )
+                if og_desc_match:
+                    description = og_desc_match.group(1)
+                else:
+                    # Try meta description
+                    meta_desc_match = re_module.search(
+                        r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
+                        downloaded, re_module.IGNORECASE
+                    )
+                    if meta_desc_match:
+                        description = meta_desc_match.group(1)
+            
+            if not og_image:
+                og_image_match = re_module.search(
+                    r'<meta[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']',
+                    downloaded, re_module.IGNORECASE
+                )
+                if og_image_match:
+                    og_image = og_image_match.group(1)
+        
+        # Use URL as title fallback
+        if not title:
+            title = url
+        
+        # Save to database
+        source_id = add_url_source(
+            url=url,
+            title=title,
+            description=description,
+            content=body_content,
+            og_image=og_image,
+        )
+        
+        return jsonify({
+            "success": True,
+            "source": {
+                "id": source_id,
+                "url": url,
+                "title": title,
+                "description": description,
+                "content": body_content,
+                "og_image": og_image,
+            }
+        })
+        
+    except Exception as e:
+        app.logger.exception("Failed to add URL source %s: %s", url, str(e))
+        return jsonify({"error": f"Failed to extract content: {str(e)}"}), 500
+
+
 @app.route('/sources/<int:source_id>')
 def get_source(source_id: int):
     """Get a single URL source by ID."""
@@ -3430,6 +3604,106 @@ def delete_source(source_id: int):
     
     deleted = delete_url_source(source_id)
     return jsonify({"success": deleted})
+
+
+@app.route('/sources/<int:source_id>/reextract', methods=['POST'])
+def reextract_source(source_id: int):
+    """Re-extract content from a URL source using improved extraction."""
+    import trafilatura
+    
+    source = get_url_source(source_id)
+    if not source:
+        return jsonify({"error": "Source not found"}), 404
+    
+    url = source['url']
+    
+    try:
+        # Use trafilatura for robust article extraction
+        downloaded = trafilatura.fetch_url(url)
+        
+        if not downloaded:
+            return jsonify({"error": "Failed to fetch URL content"}), 500
+        
+        # Extract main article content
+        body_content = trafilatura.extract(
+            downloaded,
+            include_comments=False,
+            include_tables=True,
+            favor_precision=True,
+        ) or ""
+        
+        # Extract metadata
+        metadata = trafilatura.extract_metadata(downloaded)
+        
+        title = ""
+        description = ""
+        og_image = None
+        
+        if metadata:
+            title = metadata.title or ""
+            description = metadata.description or ""
+            og_image = metadata.image
+        
+        # Fallback metadata extraction from HTML if needed
+        if not title or not description:
+            import re
+            
+            if not title:
+                title_match = re.search(r'<title>([^<]+)</title>', downloaded, re.IGNORECASE)
+                if title_match:
+                    title = title_match.group(1).strip()
+                
+                og_title_match = re.search(
+                    r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']',
+                    downloaded, re.IGNORECASE
+                )
+                if og_title_match:
+                    title = og_title_match.group(1)
+            
+            if not description:
+                og_desc_match = re.search(
+                    r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\']+)["\']',
+                    downloaded, re.IGNORECASE
+                )
+                if og_desc_match:
+                    description = og_desc_match.group(1)
+            
+            if not og_image:
+                og_image_match = re.search(
+                    r'<meta[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']',
+                    downloaded, re.IGNORECASE
+                )
+                if og_image_match:
+                    og_image = og_image_match.group(1)
+        
+        # Update the source in the database
+        updated = update_url_source_content(
+            source_id=source_id,
+            title=title,
+            description=description,
+            content=body_content,
+            og_image=og_image,
+        )
+        
+        if not updated:
+            return jsonify({"error": "Failed to update source"}), 500
+        
+        # Return the updated source data
+        return jsonify({
+            "success": True,
+            "source": {
+                "id": source_id,
+                "url": url,
+                "title": title,
+                "description": description,
+                "content": body_content,
+                "og_image": og_image,
+            }
+        })
+        
+    except Exception as e:
+        app.logger.exception("Failed to re-extract source %d: %s", source_id, str(e))
+        return jsonify({"error": f"Extraction failed: {str(e)}"}), 500
 
 
 @app.route('/compose/generate-from-source', methods=['POST'])

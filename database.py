@@ -1219,6 +1219,43 @@ def get_pending_schedules_for_standalone_posts(standalone_post_ids: List[int], d
         return result
 
 
+def get_posted_info_for_standalone_posts(standalone_post_ids: List[int], db_path: str = DB_PATH) -> dict:
+    """Get posted info for a list of standalone post IDs.
+    
+    Returns a dict mapping standalone_post_id -> {platform: {url, posted_at}}
+    Only includes posts that have been successfully posted.
+    """
+    if not standalone_post_ids:
+        return {}
+    
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        placeholders = ",".join("?" for _ in standalone_post_ids)
+        cur = conn.execute(
+            f"""
+            SELECT standalone_post_id, platform, linkedin_post_urn, posted_at
+            FROM scheduled_posts
+            WHERE standalone_post_id IN ({placeholders})
+            AND status = 'posted'
+            ORDER BY posted_at DESC
+            """,
+            standalone_post_ids,
+        )
+        
+        result = {}
+        for row in cur.fetchall():
+            post_id = row['standalone_post_id']
+            if post_id not in result:
+                result[post_id] = {}
+            # Store the most recent posted info per platform
+            if row['platform'] not in result[post_id]:
+                result[post_id][row['platform']] = {
+                    'url': row['linkedin_post_urn'],  # This stores URL/URN for all platforms
+                    'posted_at': row['posted_at'],
+                }
+        return result
+
+
 def list_scheduled_posts(
     status: str | None = None,
     platform: str | None = None,
@@ -2189,3 +2226,36 @@ def update_url_source_last_used(source_id: int, db_path: str = DB_PATH) -> None:
             (now, source_id),
         )
         conn.commit()
+
+
+def update_url_source_content(
+    source_id: int,
+    title: str,
+    description: str,
+    content: str,
+    og_image: Optional[str] = None,
+    db_path: str = DB_PATH
+) -> bool:
+    """Update the content of a URL source (for re-extraction).
+    
+    Args:
+        source_id: The source ID to update
+        title: New title
+        description: New description
+        content: New extracted content
+        og_image: New OG image URL (optional)
+        
+    Returns:
+        True if updated successfully
+    """
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            UPDATE url_sources 
+            SET title = ?, description = ?, content = ?, og_image = ?
+            WHERE id = ?
+            """,
+            (title, description, content, og_image, source_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0

@@ -3,6 +3,11 @@
 {% block header %}Saved Sources{% endblock %}
 {% block content %}
 <style>
+    /* Fix long URLs overflowing in modal */
+    #sourceDetailsContent a {
+        word-break: break-all;
+        overflow-wrap: break-word;
+    }
     .source-card {
         border: 1px solid #dee2e6;
         border-radius: 12px;
@@ -54,6 +59,11 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        max-width: 100%;
+    }
+    .source-card .flex-grow-1 {
+        min-width: 0;
+        overflow: hidden;
     }
     .source-url:hover {
         color: #0d6efd;
@@ -120,9 +130,14 @@
     </ol>
 </nav>
 
-<div class="page-header">
-    <h2>📚 Saved URL Sources</h2>
-    <p>Content extracted from URLs, saved for generating more posts</p>
+<div class="page-header d-flex justify-content-between align-items-center">
+    <div>
+        <h2>📚 Saved URL Sources</h2>
+        <p>Content extracted from URLs, saved for generating more posts</p>
+    </div>
+    <button type="button" class="btn btn-light btn-lg" onclick="showAddUrlModal()">
+        ➕ Add URL
+    </button>
 </div>
 
 {% if sources %}
@@ -179,10 +194,15 @@
 {% else %}
 <div class="empty-state">
     <h3>📭 No Saved Sources Yet</h3>
-    <p>When you generate posts from URLs in the Command Center, the extracted content will be saved here for reuse.</p>
-    <a href="{{ url_for('compose_page') }}" class="btn btn-primary">
-        ✨ Go to Command Center
-    </a>
+    <p>Add URLs to extract and save content for generating posts, or use the Command Center.</p>
+    <div class="d-flex gap-2 justify-content-center">
+        <button type="button" class="btn btn-primary" onclick="showAddUrlModal()">
+            ➕ Add URL
+        </button>
+        <a href="{{ url_for('compose_page') }}" class="btn btn-outline-primary">
+            ✨ Go to Command Center
+        </a>
+    </div>
 </div>
 {% endif %}
 
@@ -205,7 +225,44 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-outline-primary" id="reextractBtn" onclick="reextractSource()">
+                    🔄 Re-extract
+                </button>
                 <a href="#" id="generateFromSourceBtn" class="btn btn-primary">✨ Generate Posts</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add URL Modal -->
+<div class="modal fade" id="addUrlModal" tabindex="-1" aria-labelledby="addUrlModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addUrlModalLabel">Add URL Source</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="addUrlError" class="alert alert-danger d-none"></div>
+                <div id="addUrlSuccess" class="alert alert-success d-none"></div>
+                <form id="addUrlForm" onsubmit="submitAddUrl(event)">
+                    <div class="mb-3">
+                        <label for="urlInput" class="form-label">URL</label>
+                        <input type="url" class="form-control" id="urlInput" 
+                               placeholder="https://example.com/article" required>
+                        <div class="form-text">Enter the URL of an article or webpage to extract content from.</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" form="addUrlForm" class="btn btn-primary" id="addUrlSubmitBtn">
+                    <span class="btn-text">Extract & Save</span>
+                    <span class="btn-loading d-none">
+                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                        Extracting...
+                    </span>
+                </button>
             </div>
         </div>
     </div>
@@ -231,13 +288,197 @@
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 let deleteSourceId = null;
+let currentSourceId = null;
+let addUrlModal = null;
+
+function showAddUrlModal() {
+    // Reset form state
+    document.getElementById('urlInput').value = '';
+    document.getElementById('addUrlError').classList.add('d-none');
+    document.getElementById('addUrlSuccess').classList.add('d-none');
+    document.getElementById('addUrlForm').classList.remove('d-none');
+    
+    const submitBtn = document.getElementById('addUrlSubmitBtn');
+    submitBtn.disabled = false;
+    submitBtn.querySelector('.btn-text').classList.remove('d-none');
+    submitBtn.querySelector('.btn-loading').classList.add('d-none');
+    
+    addUrlModal = new bootstrap.Modal(document.getElementById('addUrlModal'));
+    addUrlModal.show();
+}
+
+function submitAddUrl(event) {
+    event.preventDefault();
+    
+    const urlInput = document.getElementById('urlInput');
+    const url = urlInput.value.trim();
+    const errorDiv = document.getElementById('addUrlError');
+    const successDiv = document.getElementById('addUrlSuccess');
+    const submitBtn = document.getElementById('addUrlSubmitBtn');
+    
+    if (!url) {
+        errorDiv.textContent = 'Please enter a URL';
+        errorDiv.classList.remove('d-none');
+        return;
+    }
+    
+    // Show loading state
+    errorDiv.classList.add('d-none');
+    successDiv.classList.add('d-none');
+    submitBtn.disabled = true;
+    submitBtn.querySelector('.btn-text').classList.add('d-none');
+    submitBtn.querySelector('.btn-loading').classList.remove('d-none');
+    
+    fetch('/sources', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: url })
+    })
+    .then(response => response.json().then(data => ({ status: response.status, data })))
+    .then(({ status, data }) => {
+        submitBtn.disabled = false;
+        submitBtn.querySelector('.btn-text').classList.remove('d-none');
+        submitBtn.querySelector('.btn-loading').classList.add('d-none');
+        
+        if (status === 409) {
+            // URL already exists
+            errorDiv.innerHTML = `This URL has already been saved. <a href="#" onclick="viewSourceDetails(${data.existing_id}); addUrlModal.hide(); return false;">View existing source</a>`;
+            errorDiv.classList.remove('d-none');
+            return;
+        }
+        
+        if (data.error) {
+            errorDiv.textContent = data.error;
+            errorDiv.classList.remove('d-none');
+            return;
+        }
+        
+        // Success - add the new source card to the page
+        successDiv.innerHTML = `
+            <strong>Success!</strong> "${data.source.title}" has been extracted and saved.
+        `;
+        successDiv.classList.remove('d-none');
+        document.getElementById('addUrlForm').classList.add('d-none');
+        
+        // Add the new source card to the page
+        addSourceCardToPage(data.source);
+        
+        // Close modal after a short delay
+        setTimeout(() => {
+            if (addUrlModal) {
+                addUrlModal.hide();
+            }
+        }, 1500);
+    })
+    .catch(err => {
+        submitBtn.disabled = false;
+        submitBtn.querySelector('.btn-text').classList.remove('d-none');
+        submitBtn.querySelector('.btn-loading').classList.add('d-none');
+        errorDiv.textContent = 'An error occurred. Please try again.';
+        errorDiv.classList.remove('d-none');
+    });
+}
+
+function addSourceCardToPage(source) {
+    // Check if we're showing the empty state
+    const emptyState = document.querySelector('.empty-state');
+    if (emptyState) {
+        // Reload the page to show the new sources list
+        location.reload();
+        return;
+    }
+    
+    // Update the count
+    const countSpan = document.querySelector('.results-count strong');
+    if (countSpan) {
+        const currentCount = parseInt(countSpan.textContent) || 0;
+        countSpan.textContent = currentCount + 1;
+        
+        // Update singular/plural
+        const countText = countSpan.parentElement;
+        if (currentCount + 1 === 1) {
+            countText.innerHTML = '<strong>1</strong> saved source';
+        } else {
+            countText.innerHTML = `<strong>${currentCount + 1}</strong> saved sources`;
+        }
+    }
+    
+    // Create new source card
+    const sourcesList = document.querySelector('.sources-list');
+    if (sourcesList) {
+        const card = document.createElement('div');
+        card.className = 'source-card';
+        card.setAttribute('data-source-id', source.id);
+        
+        const thumbnailContent = source.og_image 
+            ? `<img src="${source.og_image}" alt="Preview" onerror="this.style.display='none'; this.parentElement.innerHTML='🔗';">`
+            : '🔗';
+        
+        const descriptionHtml = source.description 
+            ? `<p class="source-description">${escapeHtml(source.description)}</p>`
+            : '';
+        
+        const today = new Date().toISOString().slice(0, 10);
+        
+        card.innerHTML = `
+            <div class="d-flex gap-3">
+                <div class="source-thumbnail">
+                    ${thumbnailContent}
+                </div>
+                <div class="flex-grow-1">
+                    <h5 class="source-title">${escapeHtml(source.title || 'Untitled')}</h5>
+                    <a href="${escapeHtml(source.url)}" target="_blank" rel="noopener" class="source-url">
+                        ${escapeHtml(source.url)}
+                    </a>
+                    ${descriptionHtml}
+                    <div class="source-meta">
+                        <span title="Created">📅 Saved: ${today}</span>
+                    </div>
+                </div>
+                <div class="source-actions align-self-center">
+                    <a href="{{ url_for('compose_page') }}?source_id=${source.id}" 
+                       class="btn btn-sm btn-primary" title="Generate posts from this source">
+                        ✨ Generate Posts
+                    </a>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" 
+                            onclick="viewSourceDetails(${source.id})" title="View full content">
+                        👁️ View
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" 
+                            onclick="confirmDeleteSource(${source.id}, '${escapeHtml(source.title)}')" title="Delete">
+                        🗑️
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        // Insert at the top of the list
+        sourcesList.insertBefore(card, sourcesList.firstChild);
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
 function viewSourceDetails(sourceId) {
+    currentSourceId = sourceId;
     const modal = new bootstrap.Modal(document.getElementById('sourceDetailsModal'));
     const contentDiv = document.getElementById('sourceDetailsContent');
     const generateBtn = document.getElementById('generateFromSourceBtn');
+    const reextractBtn = document.getElementById('reextractBtn');
+    
+    // Reset button state
+    reextractBtn.disabled = false;
+    reextractBtn.innerHTML = '🔄 Re-extract';
     
     // Show loading state
     contentDiv.innerHTML = `
@@ -261,35 +502,83 @@ function viewSourceDetails(sourceId) {
                 return;
             }
             
-            contentDiv.innerHTML = `
-                <div class="mb-3">
-                    <label class="form-label fw-bold">URL</label>
-                    <p><a href="${data.url}" target="_blank" rel="noopener">${data.url}</a></p>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label fw-bold">Title</label>
-                    <p>${data.title || '<em>No title</em>'}</p>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label fw-bold">Description</label>
-                    <p>${data.description || '<em>No description</em>'}</p>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label fw-bold">Extracted Content</label>
-                    <div style="max-height: 300px; overflow-y: auto; background: #f8f9fa; padding: 1rem; border-radius: 8px; font-size: 0.9rem;">
-                        ${data.content ? data.content.substring(0, 2000) + (data.content.length > 2000 ? '...' : '') : '<em>No content extracted</em>'}
-                    </div>
-                </div>
-                ${data.og_image ? `
-                <div class="mb-3">
-                    <label class="form-label fw-bold">Preview Image</label>
-                    <div><img src="${data.og_image}" alt="Preview" style="max-width: 300px; border-radius: 8px;"></div>
-                </div>
-                ` : ''}
-            `;
+            updateSourceDetailsContent(data);
         })
         .catch(err => {
             contentDiv.innerHTML = `<div class="alert alert-danger">Failed to load source details</div>`;
+        });
+}
+
+function updateSourceDetailsContent(data) {
+    const contentDiv = document.getElementById('sourceDetailsContent');
+    contentDiv.innerHTML = `
+        <div class="mb-3">
+            <label class="form-label fw-bold">URL</label>
+            <p><a href="${data.url}" target="_blank" rel="noopener">${data.url}</a></p>
+        </div>
+        <div class="mb-3">
+            <label class="form-label fw-bold">Title</label>
+            <p>${data.title || '<em>No title</em>'}</p>
+        </div>
+        <div class="mb-3">
+            <label class="form-label fw-bold">Description</label>
+            <p>${data.description || '<em>No description</em>'}</p>
+        </div>
+        <div class="mb-3">
+            <label class="form-label fw-bold">Extracted Content <span class="text-muted fw-normal">(${data.content ? data.content.length.toLocaleString() : 0} chars)</span></label>
+            <div style="max-height: 400px; overflow-y: auto; background: #f8f9fa; padding: 1rem; border-radius: 8px; font-size: 0.9rem; white-space: pre-wrap;">
+                ${data.content || '<em>No content extracted</em>'}
+            </div>
+        </div>
+        ${data.og_image ? `
+        <div class="mb-3">
+            <label class="form-label fw-bold">Preview Image</label>
+            <div><img src="${data.og_image}" alt="Preview" style="max-width: 300px; border-radius: 8px;"></div>
+        </div>
+        ` : ''}
+    `;
+}
+
+function reextractSource() {
+    if (!currentSourceId) return;
+    
+    const reextractBtn = document.getElementById('reextractBtn');
+    const contentDiv = document.getElementById('sourceDetailsContent');
+    
+    // Show loading state
+    reextractBtn.disabled = true;
+    reextractBtn.innerHTML = `
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        Extracting...
+    `;
+    
+    fetch(`/sources/${currentSourceId}/reextract`, { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            reextractBtn.disabled = false;
+            reextractBtn.innerHTML = '🔄 Re-extract';
+            
+            if (data.error) {
+                alert('Re-extraction failed: ' + data.error);
+                return;
+            }
+            
+            // Update the modal content with new data
+            updateSourceDetailsContent(data.source);
+            
+            // Show success message
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-success alert-dismissible fade show mb-3';
+            alertDiv.innerHTML = `
+                Content re-extracted successfully!
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            contentDiv.insertBefore(alertDiv, contentDiv.firstChild);
+        })
+        .catch(err => {
+            reextractBtn.disabled = false;
+            reextractBtn.innerHTML = '🔄 Re-extract';
+            alert('Re-extraction failed. Please try again.');
         });
 }
 

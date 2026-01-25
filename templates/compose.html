@@ -626,6 +626,17 @@
                                     </span>
                                     {% endfor %}
                                 {% endif %}
+                                {% if post.posted %}
+                                    {% for posted_platform, posted_data in post.posted.items() %}
+                                    {% if posted_data.url %}
+                                    <a href="{{ posted_data.url }}" target="_blank" rel="noopener" 
+                                       class="badge text-decoration-none {% if posted_platform == 'linkedin' %}bg-primary{% elif posted_platform == 'threads' %}bg-dark{% else %}bg-success{% endif %}" 
+                                       title="Posted {{ posted_data.posted_at[:16] if posted_data.posted_at else '' }} - Click to view">
+                                        🔗 {{ posted_platform|capitalize }}
+                                    </a>
+                                    {% endif %}
+                                    {% endfor %}
+                                {% endif %}
                             </div>
                             <div class="btn-group btn-group-sm post-actions">
                                 <button class="btn btn-outline-secondary" onclick="copySavedPost(this, {{ post.id }})" title="Copy">
@@ -862,13 +873,16 @@
                     </div>
                 </div>
             </div>
-            <div class="modal-footer justify-content-center">
+            <div class="modal-footer justify-content-center flex-wrap gap-2">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary" onclick="queueAllUnscheduled('linkedin')">
                     💼 Queue LinkedIn
                 </button>
                 <button type="button" class="btn btn-dark" onclick="queueAllUnscheduled('threads')">
                     🧵 Queue Threads
+                </button>
+                <button type="button" class="btn btn-success" onclick="queueAllBothPlatforms()">
+                    🚀 Queue All
                 </button>
             </div>
         </div>
@@ -1938,9 +1952,13 @@ function toggleSelectMode() {
 }
 
 function selectAllPosts() {
-    const checkboxes = document.querySelectorAll('.post-select-checkbox');
-    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    checkboxes.forEach(cb => cb.checked = !allChecked);
+    // Only select VISIBLE posts (not hidden by filters or "show more")
+    const visibleCheckboxes = Array.from(document.querySelectorAll('.post-select-checkbox')).filter(cb => {
+        const postItem = cb.closest('.post-item');
+        return postItem && postItem.style.display !== 'none' && !postItem.classList.contains('d-none');
+    });
+    const allChecked = visibleCheckboxes.length > 0 && visibleCheckboxes.every(cb => cb.checked);
+    visibleCheckboxes.forEach(cb => cb.checked = !allChecked);
     updateSelectedCount();
     const btn = document.getElementById('select-all-btn');
     btn.innerHTML = allChecked ? '☑️ Select All' : '☐ Deselect All';
@@ -1949,17 +1967,26 @@ function selectAllPosts() {
 function selectPlatformPosts(platform) {
     const card = document.querySelector(`.social-copy-card[data-platform="${platform}"]`);
     if (!card) return;
-    const checkboxes = card.querySelectorAll('.post-select-checkbox');
-    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    checkboxes.forEach(cb => cb.checked = !allChecked);
+    // Only select VISIBLE posts within this platform
+    const visibleCheckboxes = Array.from(card.querySelectorAll('.post-select-checkbox')).filter(cb => {
+        const postItem = cb.closest('.post-item');
+        return postItem && postItem.style.display !== 'none' && !postItem.classList.contains('d-none');
+    });
+    const allChecked = visibleCheckboxes.length > 0 && visibleCheckboxes.every(cb => cb.checked);
+    visibleCheckboxes.forEach(cb => cb.checked = !allChecked);
     updateSelectedCount();
 }
 
 function updateSelectedCount() {
-    const allCheckboxes = document.querySelectorAll('.post-select-checkbox');
     const selected = document.querySelectorAll('.post-select-checkbox:checked');
     const count = selected.length;
     document.getElementById('selected-count').textContent = count;
+    
+    // Count only visible checkboxes for "all selected" state
+    const visibleCheckboxes = Array.from(document.querySelectorAll('.post-select-checkbox')).filter(cb => {
+        const postItem = cb.closest('.post-item');
+        return postItem && postItem.style.display !== 'none' && !postItem.classList.contains('d-none');
+    });
     
     const deleteBtn = document.getElementById('delete-selected-btn');
     const queueBtn = document.getElementById('queue-selected-btn');
@@ -1989,7 +2016,9 @@ function updateSelectedCount() {
     
     const selectAllBtn = document.getElementById('select-all-btn');
     if (selectAllBtn) {
-        const allChecked = allCheckboxes.length > 0 && allCheckboxes.length === selected.length;
+        // Check if all VISIBLE checkboxes are selected
+        const visibleSelected = visibleCheckboxes.filter(cb => cb.checked);
+        const allChecked = visibleCheckboxes.length > 0 && visibleCheckboxes.length === visibleSelected.length;
         selectAllBtn.innerHTML = allChecked ? '☐ Deselect All' : '☑️ Select All';
     }
 }
@@ -2219,6 +2248,96 @@ async function queueAllUnscheduled(platform) {
     }
 }
 
+async function queueAllBothPlatforms() {
+    const linkedinCount = parseInt(document.getElementById('unscheduled-linkedin-count').textContent) || 0;
+    const threadsCount = parseInt(document.getElementById('unscheduled-threads-count').textContent) || 0;
+    
+    if (linkedinCount === 0 && threadsCount === 0) {
+        showToast('No unscheduled posts to queue', 'warning');
+        return;
+    }
+    
+    if (linkedinCount > 0 && !linkedinConnected) {
+        alert('Please connect LinkedIn first to queue LinkedIn posts');
+        return;
+    }
+    if (threadsCount > 0 && !threadsConnected) {
+        alert('Please connect Threads first to queue Threads posts');
+        return;
+    }
+    
+    bootstrap.Modal.getInstance(document.getElementById('queueAllModal')).hide();
+    
+    let totalSuccess = 0;
+    let totalFail = 0;
+    
+    // Queue LinkedIn posts
+    if (linkedinCount > 0 && linkedinConnected) {
+        showToast(`Adding ${linkedinCount} LinkedIn posts to queue...`, 'info');
+        const linkedinResult = await queuePlatformPosts('linkedin');
+        totalSuccess += linkedinResult.success;
+        totalFail += linkedinResult.fail;
+    }
+    
+    // Queue Threads posts
+    if (threadsCount > 0 && threadsConnected) {
+        showToast(`Adding ${threadsCount} Threads posts to queue...`, 'info');
+        const threadsResult = await queuePlatformPosts('threads');
+        totalSuccess += threadsResult.success;
+        totalFail += threadsResult.fail;
+    }
+    
+    if (totalFail === 0) {
+        showToast(`Added ${totalSuccess} posts to queue!`, 'success');
+    } else {
+        showToast(`Added ${totalSuccess}, failed ${totalFail}`, 'warning');
+    }
+}
+
+async function queuePlatformPosts(platform) {
+    const postsToQueue = [];
+    
+    document.querySelectorAll(`.social-copy-card[data-platform="${platform}"] .post-item`).forEach(item => {
+        const queueBtn = item.querySelector(`.btn-outline-success[data-platform="${platform}"]`);
+        const usedBadge = item.querySelector('.used-badge');
+        if (queueBtn && !queueBtn.disabled && !usedBadge) {
+            postsToQueue.push({
+                postId: queueBtn.dataset.postId,
+                btn: queueBtn
+            });
+        }
+    });
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const post of postsToQueue) {
+        const formData = new FormData();
+        formData.append('platform', platform);
+        
+        try {
+            const response = await fetch(`/compose/post/${post.postId}/queue`, {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            if (response.ok && data.success) {
+                successCount++;
+                post.btn.innerHTML = '✅';
+                post.btn.classList.remove('btn-outline-success');
+                post.btn.classList.add('btn-success');
+                post.btn.disabled = true;
+            } else {
+                failCount++;
+            }
+        } catch (e) {
+            failCount++;
+        }
+    }
+    
+    return { success: successCount, fail: failCount };
+}
+
 function clearAllPosts() {
     if (!confirm('Clear ALL generated posts? This cannot be undone.')) return;
     
@@ -2272,6 +2391,7 @@ function applyPostFilters() {
         const platform = card.dataset.platform;
         const posts = card.querySelectorAll('.post-item');
         let visibleInCard = 0;
+        let totalInCard = posts.length;
         
         posts.forEach(post => {
             totalPosts++;
@@ -2307,6 +2427,16 @@ function applyPostFilters() {
         
         // Hide card if no visible posts
         card.style.display = visibleInCard > 0 ? '' : 'none';
+        
+        // Update platform count badge
+        const countBadge = card.querySelector('.social-copy-header .badge');
+        if (countBadge) {
+            if (usedFilter || queuedFilter || platformFilter) {
+                countBadge.textContent = `${visibleInCard} of ${totalInCard} posts`;
+            } else {
+                countBadge.textContent = `${totalInCard} post${totalInCard !== 1 ? 's' : ''}`;
+            }
+        }
     });
     
     // Update results count
@@ -2317,6 +2447,11 @@ function applyPostFilters() {
         } else {
             resultsSpan.textContent = '';
         }
+    }
+    
+    // Update selected count since visibility changed
+    if (selectModeActive) {
+        updateSelectedCount();
     }
 }
 

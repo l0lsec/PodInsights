@@ -636,73 +636,81 @@ def generate_posts_from_url(
     """
     import requests
     import re
+    import trafilatura
     
     if platforms is None:
         platforms = ["linkedin", "threads", "twitter"]
     
     # Fetch the URL content
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; PodInsights/1.0)"
-        }
-        response = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
-        response.raise_for_status()
-        html = response.text
+        # Use trafilatura for robust article extraction
+        downloaded = trafilatura.fetch_url(url)
         
-        # Extract title
-        title_match = re.search(r'<title>([^<]+)</title>', html, re.IGNORECASE)
-        title = title_match.group(1).strip() if title_match else ""
+        if not downloaded:
+            raise RuntimeError(f"Failed to fetch content from URL: {url}")
         
-        # Extract og:title if available
-        og_title_match = re.search(
-            r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']',
-            html, re.IGNORECASE
-        )
-        if og_title_match:
-            title = og_title_match.group(1)
+        # Extract main article content using trafilatura
+        body_content = trafilatura.extract(
+            downloaded,
+            include_comments=False,
+            include_tables=True,
+            favor_precision=True,
+        ) or ""
         
-        # Extract og:description
+        # Extract metadata using trafilatura's metadata extraction
+        metadata = trafilatura.extract_metadata(downloaded)
+        
+        title = ""
         description = ""
-        og_desc_match = re.search(
-            r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\']+)["\']',
-            html, re.IGNORECASE
-        )
-        if og_desc_match:
-            description = og_desc_match.group(1)
-        else:
-            # Fallback to meta description
-            meta_desc_match = re.search(
-                r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
-                html, re.IGNORECASE
-            )
-            if meta_desc_match:
-                description = meta_desc_match.group(1)
-        
-        # Extract og:image
         og_image = None
-        og_image_match = re.search(
-            r'<meta[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']',
-            html, re.IGNORECASE
-        )
-        if og_image_match:
-            og_image = og_image_match.group(1)
         
-        # Extract article content (simplified - get text from body)
-        body_content = ""
-        body_match = re.search(r'<body[^>]*>(.*?)</body>', html, re.IGNORECASE | re.DOTALL)
-        if body_match:
-            body_html = body_match.group(1)
-            # Remove script and style tags
-            body_html = re.sub(r'<script[^>]*>.*?</script>', '', body_html, flags=re.IGNORECASE | re.DOTALL)
-            body_html = re.sub(r'<style[^>]*>.*?</style>', '', body_html, flags=re.IGNORECASE | re.DOTALL)
-            # Remove HTML tags
-            body_content = re.sub(r'<[^>]+>', ' ', body_html)
-            # Clean up whitespace
-            body_content = re.sub(r'\s+', ' ', body_content).strip()
-            # Limit to first 5000 chars
-            body_content = body_content[:5000]
+        if metadata:
+            title = metadata.title or ""
+            description = metadata.description or ""
+            og_image = metadata.image
         
-        extracted_content = f"TITLE: {title}\n\nDESCRIPTION: {description}\n\nCONTENT EXCERPT: {body_content}"
+        # Fallback: extract metadata from HTML if trafilatura didn't get it
+        if not title or not description:
+            # Extract title from HTML
+            title_match = re.search(r'<title>([^<]+)</title>', downloaded, re.IGNORECASE)
+            if not title and title_match:
+                title = title_match.group(1).strip()
+            
+            # Extract og:title if available
+            og_title_match = re.search(
+                r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']',
+                downloaded, re.IGNORECASE
+            )
+            if og_title_match:
+                title = og_title_match.group(1)
+            
+            # Extract og:description
+            if not description:
+                og_desc_match = re.search(
+                    r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\']+)["\']',
+                    downloaded, re.IGNORECASE
+                )
+                if og_desc_match:
+                    description = og_desc_match.group(1)
+                else:
+                    # Fallback to meta description
+                    meta_desc_match = re.search(
+                        r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
+                        downloaded, re.IGNORECASE
+                    )
+                    if meta_desc_match:
+                        description = meta_desc_match.group(1)
+            
+            # Extract og:image if not already found
+            if not og_image:
+                og_image_match = re.search(
+                    r'<meta[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']',
+                    downloaded, re.IGNORECASE
+                )
+                if og_image_match:
+                    og_image = og_image_match.group(1)
+        
+        extracted_content = f"TITLE: {title}\n\nDESCRIPTION: {description}\n\nCONTENT: {body_content}"
         
         # Store source data for saving
         source_data = {
@@ -713,7 +721,7 @@ def generate_posts_from_url(
             "og_image": og_image,
         }
         
-    except requests.RequestException as e:
+    except (requests.RequestException, Exception) as e:
         logger.error("Failed to fetch URL %s: %s", url, e)
         raise RuntimeError(f"Failed to fetch content from URL: {e}") from e
     
