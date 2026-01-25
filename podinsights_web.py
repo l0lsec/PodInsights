@@ -1423,6 +1423,18 @@ def edit_social_post(post_id: int):
     return {"success": True, "content": content}
 
 
+@app.route('/social/<int:post_id>/image', methods=['POST'])
+def edit_social_post_image(post_id: int):
+    """Update the image URL of a social post."""
+    post = get_social_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    image_url = request.form.get('image_url', '').strip() or None
+    update_social_post_image(post_id, image_url)
+    return jsonify({"success": True, "image_url": image_url})
+
+
 @app.route('/article/<int:article_id>/refine', methods=['POST'])
 def refine_article_with_ai(article_id: int):
     """Refine an article using AI based on user feedback."""

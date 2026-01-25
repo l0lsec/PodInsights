@@ -364,8 +364,13 @@ tr.not-draggable .drag-handle {
                         <td>
                             {% if post.status == 'pending' %}
                             <button class="btn btn-sm btn-outline-primary" onclick="openEditModal({{ post.id }}, '{{ post.scheduled_for }}')" title="Edit Time">
-                                ✏️ Edit
+                                ✏️ Time
                             </button>
+                            {% if post.social_post_id or post.standalone_post_id %}
+                            <button class="btn btn-sm btn-outline-secondary" onclick="openEditContentModal({{ post.social_post_id or post.standalone_post_id }}, '{{ 'social' if post.social_post_id else 'standalone' }}', '{{ post.platform }}')" title="Edit Content" data-content="{{ (post.social_content or post.standalone_content or '')|e }}" data-image-url="{{ (post.social_image_url or post.standalone_image_url or '')|e }}">
+                                📝 Content
+                            </button>
+                            {% endif %}
                             <button class="btn btn-sm btn-success" onclick="postNow({{ post.id }}, '{{ post.platform }}')" title="Post Now">
                                 🚀 Post Now
                             </button>
@@ -508,9 +513,130 @@ tr.not-draggable .drag-handle {
     </div>
 </div>
 
+<!-- Edit Content Modal -->
+<div class="modal fade" id="editContentModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-secondary text-white">
+                <h5 class="modal-title">📝 Edit Post Content</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-content-post-id">
+                <input type="hidden" id="edit-content-post-type">
+                <input type="hidden" id="edit-content-image-url">
+                <input type="hidden" id="edit-content-original-image-url">
+                
+                <!-- Post Content Section -->
+                <div class="mb-3">
+                    <label class="form-label">Post Content</label>
+                    <textarea class="form-control" id="edit-content-textarea" rows="6" oninput="updateCharCount()"></textarea>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <small class="text-muted">Character count: <span id="edit-char-count">0</span></small>
+                    <small class="text-muted" id="edit-content-platform"></small>
+                </div>
+                
+                <!-- Image Section -->
+                <div class="mb-3">
+                    <label class="form-label">Image (optional)</label>
+                    
+                    <!-- Current Image Preview -->
+                    <div id="edit-content-image-preview" class="mb-2 text-center"></div>
+                    
+                    <!-- Image Source Tabs -->
+                    <ul class="nav nav-pills nav-fill mb-2" style="font-size: 0.85rem;">
+                        <li class="nav-item">
+                            <button class="nav-link active py-1" type="button" onclick="switchContentImageTab('upload')" id="content-upload-tab">
+                                📁 Upload
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link py-1" type="button" onclick="switchContentImageTab('url')" id="content-url-tab">
+                                🔗 URL
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link py-1" type="button" onclick="switchContentImageTab('library')" id="content-library-tab">
+                                📚 Library
+                            </button>
+                        </li>
+                    </ul>
+                    
+                    <!-- Upload Pane -->
+                    <div id="content-upload-pane">
+                        <input type="file" class="form-control" id="edit-content-image-file" 
+                               accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                               onchange="handleContentImageFile(this)">
+                        <div id="content-upload-progress" class="mt-1 d-none">
+                            <div class="progress" style="height: 20px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%;">
+                                    Uploading...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- URL Pane -->
+                    <div id="content-url-pane" class="d-none">
+                        <div class="input-group">
+                            <input type="url" class="form-control" id="edit-content-image-url-input" 
+                                   placeholder="https://example.com/image.jpg">
+                            <button class="btn btn-outline-secondary" type="button" onclick="previewContentImageUrl()" title="Preview">
+                                👁️
+                            </button>
+                            <button class="btn btn-success" type="button" onclick="applyContentImageUrl()">
+                                Apply
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Library Pane -->
+                    <div id="content-library-pane" class="d-none">
+                        <div id="content-library-grid" class="d-flex flex-wrap gap-1" style="max-height: 150px; overflow-y: auto;">
+                            <div class="text-muted small">Loading...</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Remove Image Button -->
+                    <button type="button" class="btn btn-sm btn-outline-danger mt-2 d-none" id="remove-content-image-btn" 
+                            onclick="clearContentImage()">
+                        🗑️ Remove Image
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitContentEdit()">
+                    💾 Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Image Lightbox Modal -->
+<div class="modal fade" id="imageLightboxModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content" style="background: transparent; border: none;">
+            <div class="modal-body p-0 text-center">
+                <img id="lightbox-image" src="" alt="Image preview" class="img-fluid" style="max-height: 80vh; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+                <button type="button" class="btn-close btn-close-white position-absolute top-0 end-0 m-2" data-bs-dismiss="modal" aria-label="Close" style="background-color: rgba(0,0,0,0.5); padding: 10px; border-radius: 50%;"></button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 <script>
+// Image lightbox function
+function openImageLightbox(imageUrl) {
+    const lightboxImage = document.getElementById('lightbox-image');
+    lightboxImage.src = imageUrl;
+    new bootstrap.Modal(document.getElementById('imageLightboxModal')).show();
+}
+
 // Check connection status on load
 document.addEventListener('DOMContentLoaded', function() {
     checkLinkedInStatus();
@@ -1107,6 +1233,270 @@ function submitSlotEdit() {
     .catch(error => {
         alert('Error: ' + error.message);
     });
+}
+
+// Content editing functions
+function openEditContentModal(postId, postType, platform) {
+    // Get the content and image from the data attributes of the clicked button
+    const btn = event.target.closest('button');
+    const currentContent = btn.dataset.content || '';
+    const currentImageUrl = btn.dataset.imageUrl || '';
+    
+    document.getElementById('edit-content-post-id').value = postId;
+    document.getElementById('edit-content-post-type').value = postType;
+    document.getElementById('edit-content-textarea').value = currentContent;
+    document.getElementById('edit-content-image-url').value = currentImageUrl;
+    document.getElementById('edit-content-original-image-url').value = currentImageUrl;
+    
+    // Show platform indicator
+    const platformLabel = platform === 'linkedin' ? '💼 LinkedIn' : '🧵 Threads';
+    document.getElementById('edit-content-platform').textContent = platformLabel;
+    
+    // Reset image UI
+    resetContentImageUI();
+    
+    // Show current image preview if exists
+    if (currentImageUrl) {
+        updateContentImagePreview(currentImageUrl);
+    }
+    
+    // Load image library
+    loadContentImageLibrary();
+    
+    updateCharCount();
+    new bootstrap.Modal(document.getElementById('editContentModal')).show();
+}
+
+function updateCharCount() {
+    const textarea = document.getElementById('edit-content-textarea');
+    const count = textarea ? textarea.value.length : 0;
+    document.getElementById('edit-char-count').textContent = count;
+}
+
+// Image handling functions
+function resetContentImageUI() {
+    // Reset tabs
+    document.getElementById('content-upload-tab').classList.add('active');
+    document.getElementById('content-url-tab').classList.remove('active');
+    document.getElementById('content-library-tab').classList.remove('active');
+    
+    // Reset panes
+    document.getElementById('content-upload-pane').classList.remove('d-none');
+    document.getElementById('content-url-pane').classList.add('d-none');
+    document.getElementById('content-library-pane').classList.add('d-none');
+    
+    // Clear file input
+    document.getElementById('edit-content-image-file').value = '';
+    document.getElementById('edit-content-image-url-input').value = '';
+    
+    // Hide progress
+    document.getElementById('content-upload-progress').classList.add('d-none');
+    
+    // Clear preview
+    document.getElementById('edit-content-image-preview').innerHTML = '';
+    document.getElementById('remove-content-image-btn').classList.add('d-none');
+}
+
+function switchContentImageTab(tab) {
+    // Update tab buttons
+    document.getElementById('content-upload-tab').classList.toggle('active', tab === 'upload');
+    document.getElementById('content-url-tab').classList.toggle('active', tab === 'url');
+    document.getElementById('content-library-tab').classList.toggle('active', tab === 'library');
+    
+    // Update panes
+    document.getElementById('content-upload-pane').classList.toggle('d-none', tab !== 'upload');
+    document.getElementById('content-url-pane').classList.toggle('d-none', tab !== 'url');
+    document.getElementById('content-library-pane').classList.toggle('d-none', tab !== 'library');
+    
+    // Load library if switching to it
+    if (tab === 'library') {
+        loadContentImageLibrary();
+    }
+}
+
+function handleContentImageFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    
+    // Validate file type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+        alert('Invalid file type. Please upload PNG, JPG, GIF, or WebP.');
+        input.value = '';
+        return;
+    }
+    
+    // Show progress
+    document.getElementById('content-upload-progress').classList.remove('d-none');
+    
+    const formData = new FormData();
+    formData.append('image', file);
+    
+    fetch('/compose/upload-image', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById('content-upload-progress').classList.add('d-none');
+        
+        if (data.success) {
+            document.getElementById('edit-content-image-url').value = data.image_url;
+            updateContentImagePreview(data.image_url);
+            
+            if (data.warning) {
+                console.warn(data.warning);
+            }
+        } else {
+            alert('Upload failed: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        document.getElementById('content-upload-progress').classList.add('d-none');
+        alert('Upload error: ' + error.message);
+    });
+}
+
+function previewContentImageUrl() {
+    const url = document.getElementById('edit-content-image-url-input').value.trim();
+    if (url) {
+        updateContentImagePreview(url);
+    }
+}
+
+function applyContentImageUrl() {
+    const url = document.getElementById('edit-content-image-url-input').value.trim();
+    if (!url) {
+        alert('Please enter an image URL');
+        return;
+    }
+    
+    document.getElementById('edit-content-image-url').value = url;
+    updateContentImagePreview(url);
+}
+
+function loadContentImageLibrary() {
+    const grid = document.getElementById('content-library-grid');
+    grid.innerHTML = '<div class="text-muted small">Loading...</div>';
+    
+    fetch('/compose/list-images')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.images && data.images.length > 0) {
+                grid.innerHTML = data.images.map(img => `
+                    <img src="${img.url}" 
+                         class="img-thumbnail" 
+                         style="width: 60px; height: 60px; object-fit: cover; cursor: pointer; transition: all 0.15s ease;"
+                         onmouseover="this.style.borderColor='#0d6efd'; this.style.transform='scale(1.05)';"
+                         onmouseout="this.style.borderColor=''; this.style.transform='';"
+                         onclick="selectContentLibraryImage('${img.url}')"
+                         title="${img.filename}">
+                `).join('');
+            } else {
+                grid.innerHTML = '<div class="text-muted small">No uploaded images yet</div>';
+            }
+        })
+        .catch(error => {
+            grid.innerHTML = '<div class="text-danger small">Failed to load images</div>';
+        });
+}
+
+function selectContentLibraryImage(url) {
+    document.getElementById('edit-content-image-url').value = url;
+    updateContentImagePreview(url);
+}
+
+function updateContentImagePreview(url) {
+    const preview = document.getElementById('edit-content-image-preview');
+    const removeBtn = document.getElementById('remove-content-image-btn');
+    
+    if (url) {
+        preview.innerHTML = `
+            <img src="${url}" 
+                 class="img-thumbnail" 
+                 style="max-height: 150px; max-width: 100%; cursor: pointer;"
+                 onclick="openImageLightbox('${url}')"
+                 title="Click to enlarge"
+                 onerror="this.parentElement.innerHTML='<span class=\\'text-danger small\\'>Failed to load image</span>';">
+        `;
+        removeBtn.classList.remove('d-none');
+    } else {
+        preview.innerHTML = '';
+        removeBtn.classList.add('d-none');
+    }
+}
+
+function clearContentImage() {
+    document.getElementById('edit-content-image-url').value = '';
+    document.getElementById('edit-content-image-url-input').value = '';
+    document.getElementById('edit-content-image-file').value = '';
+    updateContentImagePreview('');
+}
+
+function submitContentEdit() {
+    const postId = document.getElementById('edit-content-post-id').value;
+    const postType = document.getElementById('edit-content-post-type').value;
+    const content = document.getElementById('edit-content-textarea').value.trim();
+    const imageUrl = document.getElementById('edit-content-image-url').value;
+    const originalImageUrl = document.getElementById('edit-content-original-image-url').value;
+    
+    if (!content) {
+        alert('Post content cannot be empty');
+        return;
+    }
+    
+    // Show saving state
+    const saveBtn = document.querySelector('#editContentModal .btn-primary');
+    const originalText = saveBtn.innerHTML;
+    saveBtn.innerHTML = '⏳ Saving...';
+    saveBtn.disabled = true;
+    
+    // Use the appropriate endpoints based on post type
+    const contentUrl = postType === 'social' 
+        ? `/social/${postId}/edit` 
+        : `/compose/post/${postId}/edit`;
+    
+    const imageEndpoint = postType === 'social' 
+        ? `/social/${postId}/image` 
+        : `/compose/post/${postId}/image`;
+    
+    const contentFormData = new FormData();
+    contentFormData.append('content', content);
+    
+    // Save content first
+    fetch(contentUrl, { method: 'POST', body: contentFormData })
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                throw new Error(data.error || 'Failed to save content');
+            }
+            
+            // If image changed, save image too
+            if (imageUrl !== originalImageUrl) {
+                const imageFormData = new FormData();
+                imageFormData.append('image_url', imageUrl);
+                
+                return fetch(imageEndpoint, { method: 'POST', body: imageFormData })
+                    .then(response => response.json());
+            }
+            return { success: true };
+        })
+        .then(data => {
+            if (data.success) {
+                bootstrap.Modal.getInstance(document.getElementById('editContentModal')).hide();
+                // Reload to show updated content
+                location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to save'));
+                saveBtn.innerHTML = originalText;
+                saveBtn.disabled = false;
+            }
+        })
+        .catch(error => {
+            alert('Error: ' + error.message);
+            saveBtn.innerHTML = originalText;
+            saveBtn.disabled = false;
+        });
 }
 
 function updateDailyLimit(platform) {
