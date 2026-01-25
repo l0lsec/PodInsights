@@ -442,6 +442,96 @@ class LinkedInClient:
                 "error": error_data,
             }
 
+    def create_image_post(
+        self,
+        access_token: str,
+        author_urn: str,
+        text: str,
+        image_url: str,
+        visibility: str = "PUBLIC",
+    ) -> dict:
+        """Create a post with an image on LinkedIn.
+
+        Args:
+            access_token: Valid LinkedIn access token
+            author_urn: The author URN (e.g., "urn:li:person:ABC123")
+            text: The post content/commentary
+            image_url: URL of the image to attach
+            visibility: Post visibility - "PUBLIC" or "CONNECTIONS"
+
+        Returns:
+            Dict with post details including the post URN
+        """
+        # First, upload the image to get an image URN
+        logger.info("Uploading image for LinkedIn post: %s", image_url)
+        image_urn = self.upload_image_from_url(
+            access_token=access_token,
+            owner_urn=author_urn,
+            image_url=image_url,
+        )
+        
+        if not image_urn:
+            logger.warning("Failed to upload image, falling back to text-only post")
+            return self.create_text_post(
+                access_token=access_token,
+                author_urn=author_urn,
+                text=text,
+                visibility=visibility,
+            )
+        
+        logger.info("Image uploaded successfully, URN: %s", image_urn)
+        
+        # Create post with image content
+        payload = {
+            "author": author_urn,
+            "commentary": text,
+            "visibility": visibility,
+            "distribution": {
+                "feedDistribution": "MAIN_FEED",
+                "targetEntities": [],
+                "thirdPartyDistributionChannels": [],
+            },
+            "content": {
+                "media": {
+                    "id": image_urn,
+                }
+            },
+            "lifecycleState": "PUBLISHED",
+            "isReshareDisabledByAuthor": False,
+        }
+
+        response = requests.post(
+            LINKEDIN_POSTS_URL,
+            json=payload,
+            headers=self._get_api_headers(access_token),
+            timeout=30,
+        )
+
+        if response.status_code == 201:
+            post_urn = response.headers.get("x-restli-id", "")
+            return {
+                "success": True,
+                "post_urn": post_urn,
+                "status_code": response.status_code,
+            }
+        else:
+            error_data = {}
+            try:
+                error_data = response.json()
+            except Exception:
+                error_data = {"raw": response.text}
+
+            logger.error(
+                "LinkedIn image post failed: %s - %s",
+                response.status_code,
+                error_data,
+            )
+            return {
+                "success": False,
+                "status_code": response.status_code,
+                "error": error_data,
+            }
+
     def create_article_post(
         self,
         access_token: str,

@@ -100,9 +100,9 @@
         <!-- Saved Posts Section -->
         {% if social_posts %}
         <div id="saved-posts-section" class="mb-4">
-            <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                 <h6 class="mb-0">💾 Saved Posts</h6>
-                <div class="d-flex gap-2">
+                <div class="d-flex gap-2 flex-wrap">
                     <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-select-mode" onclick="toggleSelectMode()">
                         ☑️ Select
                     </button>
@@ -123,6 +123,29 @@
                     </button>
                 </div>
             </div>
+            
+            <!-- Filter Bar -->
+            <div class="d-flex gap-2 mb-3 flex-wrap align-items-center" id="posts-filter-bar">
+                <span class="text-muted small">Filter:</span>
+                <select class="form-select form-select-sm" style="width: auto;" id="filter-used" onchange="applyPostFilters()">
+                    <option value="">All Status</option>
+                    <option value="used">✓ Used</option>
+                    <option value="unused">○ Unused</option>
+                </select>
+                <select class="form-select form-select-sm" style="width: auto;" id="filter-queued" onchange="applyPostFilters()">
+                    <option value="">All Queue</option>
+                    <option value="queued">✅ Queued</option>
+                    <option value="not-queued">➕ Not Queued</option>
+                </select>
+                <select class="form-select form-select-sm" style="width: auto;" id="filter-platform" onchange="applyPostFilters()">
+                    <option value="">All Platforms</option>
+                    <option value="linkedin">💼 LinkedIn</option>
+                    <option value="threads">🧵 Threads</option>
+                </select>
+                <button class="btn btn-sm btn-outline-secondary" onclick="clearPostFilters()" title="Clear Filters">✕</button>
+                <span class="text-muted small ms-2" id="filter-results-count"></span>
+            </div>
+            
             <div id="saved-posts-container">
                 {% for platform, posts in social_posts.items() %}
                 <div class="social-copy-card mb-3" data-platform="{{ platform }}">
@@ -1518,6 +1541,75 @@ function submitSchedule() {
     .catch(error => {
         alert('Error: ' + error.message);
     });
+}
+
+// Post filtering functions
+function applyPostFilters() {
+    const usedFilter = document.getElementById('filter-used').value;
+    const queuedFilter = document.getElementById('filter-queued').value;
+    const platformFilter = document.getElementById('filter-platform').value;
+    
+    const cards = document.querySelectorAll('#saved-posts-container .social-copy-card');
+    let visiblePosts = 0;
+    let totalPosts = 0;
+    
+    cards.forEach(card => {
+        const platform = card.dataset.platform;
+        const posts = card.querySelectorAll('.post-item');
+        let visibleInCard = 0;
+        
+        posts.forEach(post => {
+            totalPosts++;
+            let show = true;
+            
+            // Platform filter (card level)
+            if (platformFilter && platform !== platformFilter) {
+                show = false;
+            }
+            
+            // Used filter
+            if (usedFilter && show) {
+                const usedBtn = post.querySelector('button[onclick*="toggleUsed"]');
+                const isUsed = usedBtn && usedBtn.innerHTML.includes('✓');
+                if (usedFilter === 'used' && !isUsed) show = false;
+                if (usedFilter === 'unused' && isUsed) show = false;
+            }
+            
+            // Queued filter
+            if (queuedFilter && show) {
+                const queueBtn = post.querySelector('.queue-toggle-btn');
+                const isQueued = queueBtn && queueBtn.dataset.queued === 'true';
+                if (queuedFilter === 'queued' && !isQueued) show = false;
+                if (queuedFilter === 'not-queued' && isQueued) show = false;
+            }
+            
+            post.style.display = show ? '' : 'none';
+            if (show) {
+                visiblePosts++;
+                visibleInCard++;
+            }
+        });
+        
+        // Hide card if no visible posts
+        card.style.display = visibleInCard > 0 ? '' : 'none';
+    });
+    
+    // Update results count
+    const resultsSpan = document.getElementById('filter-results-count');
+    if (resultsSpan) {
+        if (usedFilter || queuedFilter || platformFilter) {
+            resultsSpan.textContent = `Showing ${visiblePosts} of ${totalPosts}`;
+        } else {
+            resultsSpan.textContent = '';
+        }
+    }
+}
+
+function clearPostFilters() {
+    document.getElementById('filter-used').value = '';
+    document.getElementById('filter-queued').value = '';
+    document.getElementById('filter-platform').value = '';
+    applyPostFilters();
 }
 
 </script>

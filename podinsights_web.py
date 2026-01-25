@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 import os
+import io
 import tempfile
 import threading
+import uuid
 from queue import Queue
-from flask import Flask, request, render_template, redirect, url_for, session, jsonify
+from flask import Flask, request, render_template, redirect, url_for, session, jsonify, send_from_directory
+from PIL import Image
+import cloudinary
+import cloudinary.uploader
 import re
 import feedparser
 import requests
@@ -90,6 +95,8 @@ from database import (
     list_standalone_posts,
     get_standalone_post,
     update_standalone_post,
+    update_standalone_post_image,
+    update_social_post_image,
     delete_standalone_post,
     delete_standalone_posts_bulk,
     mark_standalone_post_used,
@@ -131,6 +138,68 @@ from threads_client import (
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
+
+# Configure image uploads
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads')
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# Ensure upload directory exists
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Configure Cloudinary (optional - for public image URLs that work with Threads)
+CLOUDINARY_CONFIGURED = False
+if os.environ.get('CLOUDINARY_CLOUD_NAME'):
+    cloudinary.config(
+        cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
+        api_key=os.environ.get('CLOUDINARY_API_KEY'),
+        api_secret=os.environ.get('CLOUDINARY_API_SECRET'),
+        secure=True
+    )
+    CLOUDINARY_CONFIGURED = True
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def validate_and_clean_image(file_storage):
+    """
+    Validate image by parsing with Pillow and re-encode to strip embedded data.
+    Returns (cleaned_bytes, extension) or raises ValueError.
+    """
+    try:
+        file_storage.seek(0)
+        img = Image.open(file_storage)
+        img.verify()  # Verify it's a valid image
+        
+        # Re-open after verify (verify() can only be called once)
+        file_storage.seek(0)
+        img = Image.open(file_storage)
+        
+        # Check format against allowlist
+        detected_format = img.format.lower() if img.format else None
+        if detected_format not in ['png', 'jpeg', 'gif', 'webp']:
+            raise ValueError(f"Image format not allowed: {detected_format}")
+        
+        # Re-encode to strip any embedded data (anti-polyglot)
+        output = io.BytesIO()
+        
+        # Handle format-specific saving
+        save_format = 'JPEG' if detected_format == 'jpeg' else detected_format.upper()
+        if save_format == 'JPEG':
+            img = img.convert('RGB')  # JPEG doesn't support alpha
+        
+        img.save(output, format=save_format, optimize=True)
+        output.seek(0)
+        
+        ext = 'jpg' if detected_format == 'jpeg' else detected_format
+        return output.read(), ext
+        
+    except Exception as e:
+        raise ValueError(f"Invalid image file: {str(e)}")
+
+
 configure_logging()
 init_db()
 
@@ -1694,15 +1763,29 @@ def linkedin_post_social(post_id: int):
     client = get_linkedin_client()
     
     try:
+        # Get image URL if available
+        image_url = post['image_url'] if 'image_url' in post.keys() else None
+        
         # Use smart post to automatically detect URLs and show link previews
         # Pass the article topic as fallback title for link previews
         article_topic = post['article_topic'] if 'article_topic' in post.keys() else None
-        result = client.create_smart_post(
-            access_token=token['access_token'],
-            author_urn=token['user_urn'],
-            text=post['content'],
-            article_title=article_topic,
-        )
+        
+        # Use image post if image URL is available and no URL in content
+        if image_url and not client.extract_first_url(post['content']):
+            app.logger.info("Posting to LinkedIn with image: %s", image_url)
+            result = client.create_image_post(
+                access_token=token['access_token'],
+                author_urn=token['user_urn'],
+                text=post['content'],
+                image_url=image_url,
+            )
+        else:
+            result = client.create_smart_post(
+                access_token=token['access_token'],
+                author_urn=token['user_urn'],
+                text=post['content'],
+                article_title=article_topic,
+            )
         
         if result['success']:
             # Mark the post as used
@@ -1934,10 +2017,22 @@ def threads_post_social(post_id: int):
     client = get_threads_client()
     
     try:
-        result = client.publish_text_post(
-            access_token=token['access_token'],
-            text=post['content'],
-        )
+        # Get image URL if available
+        image_url = post['image_url'] if 'image_url' in post.keys() else None
+        
+        # Use image post if image URL is available
+        if image_url:
+            app.logger.info("Posting to Threads with image: %s", image_url)
+            result = client.publish_image_post(
+                access_token=token['access_token'],
+                text=post['content'],
+                image_url=image_url,
+            )
+        else:
+            result = client.publish_text_post(
+                access_token=token['access_token'],
+                text=post['content'],
+            )
         
         if result['success']:
             # Mark the post as used
@@ -2180,11 +2275,14 @@ def schedule_post_now(scheduled_id: int):
     
     platform = post['platform'] if 'platform' in post.keys() else 'linkedin'
     
-    # Get content
+    # Get content and image URL
+    image_url = None
     if post['post_type'] == 'social' and post['social_content']:
         content = post['social_content']
+        image_url = post['social_image_url'] if 'social_image_url' in post.keys() else None
     elif post['post_type'] == 'standalone' and post['standalone_content']:
         content = post['standalone_content']
+        image_url = post['standalone_image_url'] if 'standalone_image_url' in post.keys() else None
     elif post['post_type'] == 'article' and post['article_content']:
         content = f"{post['article_topic']}\n\n{post['article_content'][:2800]}"
     else:
@@ -2201,10 +2299,20 @@ def schedule_post_now(scheduled_id: int):
                 return jsonify({"error": "Threads not connected"}), 400
             
             threads_client = get_threads_client()
-            result = threads_client.publish_text_post(
-                threads_token['access_token'],
-                content[:500],
-            )
+            
+            # Use image post if image URL is available
+            if image_url:
+                app.logger.info("Posting to Threads with image: %s", image_url)
+                result = threads_client.publish_image_post(
+                    threads_token['access_token'],
+                    content[:500],
+                    image_url,
+                )
+            else:
+                result = threads_client.publish_text_post(
+                    threads_token['access_token'],
+                    content[:500],
+                )
             
             if result and result.get('success'):
                 update_scheduled_post_status(
@@ -2233,12 +2341,23 @@ def schedule_post_now(scheduled_id: int):
                 return jsonify({"error": "LinkedIn not connected"}), 400
             
             client = get_linkedin_client()
-            result = client.create_smart_post(
-                token['access_token'],
-                token['user_urn'],
-                content[:3000],
-                article_title=article_topic,
-            )
+            
+            # Use image post if image URL is available and no URL in content
+            if image_url and not client.extract_first_url(content):
+                app.logger.info("Posting to LinkedIn with image: %s", image_url)
+                result = client.create_image_post(
+                    token['access_token'],
+                    token['user_urn'],
+                    content[:3000],
+                    image_url,
+                )
+            else:
+                result = client.create_smart_post(
+                    token['access_token'],
+                    token['user_urn'],
+                    content[:3000],
+                    article_title=article_topic,
+                )
             
             if result and result.get('success'):
                 update_scheduled_post_status(
@@ -2772,6 +2891,7 @@ def compose_generate():
     posts_per_platform = request.form.get('posts_per_platform', 1, type=int)
     extra_context = request.form.get('extra_context', '').strip() or None
     topic = request.form.get('topic', '').strip() or None
+    image_url = request.form.get('image_url', '').strip() or None
     
     if not content:
         return jsonify({"error": "Content is required"}), 400
@@ -2842,10 +2962,12 @@ def compose_generate():
                     source_content=content[:1000],  # Truncate for storage
                     platform=platform,
                     content=post_content,
+                    image_url=image_url,
                 )
                 saved_posts[platform].append({
                     'id': post_id,
                     'content': post_content,
+                    'image_url': image_url,
                 })
         
         response_data = {
@@ -2885,6 +3007,103 @@ def compose_edit_post(post_id: int):
     
     update_standalone_post(post_id, new_content)
     return jsonify({"success": True, "content": new_content})
+
+
+@app.route('/compose/post/<int:post_id>/image', methods=['POST'])
+def compose_update_post_image(post_id: int):
+    """Update a standalone post's image URL."""
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    image_url = request.form.get('image_url', '').strip() or None
+    
+    update_standalone_post_image(post_id, image_url)
+    return jsonify({"success": True, "image_url": image_url})
+
+
+@app.route('/compose/upload-image', methods=['POST'])
+def compose_upload_image():
+    """Upload an image file and return its URL."""
+    if 'image' not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
+    
+    file = request.files['image']
+    
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+    
+    # Check extension first (fast rejection)
+    if not allowed_file(file.filename):
+        return jsonify({"error": f"File type not allowed. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
+    
+    # Validate image content and re-encode to strip embedded data
+    try:
+        cleaned_bytes, ext = validate_and_clean_image(file)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    
+    # Upload to Cloudinary if configured (for public URLs that work with Threads)
+    if CLOUDINARY_CONFIGURED:
+        try:
+            result = cloudinary.uploader.upload(
+                cleaned_bytes,
+                folder="podinsights",
+                resource_type="image"
+            )
+            image_url = result['secure_url']
+            filename = result['public_id'].split('/')[-1]
+            
+            return jsonify({
+                "success": True,
+                "image_url": image_url,
+                "filename": filename,
+                "storage": "cloudinary"
+            })
+        except Exception as e:
+            app.logger.error("Cloudinary upload failed: %s", str(e))
+            # Fall back to local storage
+    
+    # Local storage fallback
+    unique_filename = f"{uuid.uuid4().hex}.{ext}"
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+    
+    with open(filepath, 'wb') as f:
+        f.write(cleaned_bytes)
+    
+    image_url = f"{request.host_url}static/uploads/{unique_filename}"
+    
+    return jsonify({
+        "success": True,
+        "image_url": image_url,
+        "filename": unique_filename,
+        "storage": "local",
+        "warning": "Image stored locally - may not work with Threads/external platforms" if not CLOUDINARY_CONFIGURED else None
+    })
+
+
+@app.route('/compose/list-images', methods=['GET'])
+def compose_list_images():
+    """List all uploaded images in the uploads folder."""
+    upload_dir = app.config['UPLOAD_FOLDER']
+    images = []
+    
+    if os.path.exists(upload_dir):
+        for filename in os.listdir(upload_dir):
+            if allowed_file(filename):
+                filepath = os.path.join(upload_dir, filename)
+                stat = os.stat(filepath)
+                images.append({
+                    'filename': filename,
+                    'url': f"/static/uploads/{filename}",
+                    'size': stat.st_size,
+                    'modified': stat.st_mtime
+                })
+    
+    # Sort by most recently modified first
+    images.sort(key=lambda x: x['modified'], reverse=True)
+    
+    return jsonify({'success': True, 'images': images})
 
 
 @app.route('/compose/post/<int:post_id>/delete', methods=['POST'])
@@ -2969,11 +3188,24 @@ def compose_post_to_linkedin(post_id: int):
     client = get_linkedin_client()
     
     try:
-        result = client.create_smart_post(
-            access_token=token['access_token'],
-            author_urn=token['user_urn'],
-            text=post['content'],
-        )
+        # Get image URL if available
+        image_url = post['image_url'] if 'image_url' in post.keys() else None
+        
+        # Use image post if image URL is available and no URL in content
+        if image_url and not client.extract_first_url(post['content']):
+            app.logger.info("Posting to LinkedIn with image: %s", image_url)
+            result = client.create_image_post(
+                access_token=token['access_token'],
+                author_urn=token['user_urn'],
+                text=post['content'],
+                image_url=image_url,
+            )
+        else:
+            result = client.create_smart_post(
+                access_token=token['access_token'],
+                author_urn=token['user_urn'],
+                text=post['content'],
+            )
         
         if result['success']:
             # Mark the post as used
@@ -3037,10 +3269,22 @@ def compose_post_to_threads(post_id: int):
     client = get_threads_client()
     
     try:
-        result = client.publish_text_post(
-            access_token=token['access_token'],
-            text=post['content'],
-        )
+        # Get image URL if available
+        image_url = post['image_url'] if 'image_url' in post.keys() else None
+        
+        # Use image post if image URL is available
+        if image_url:
+            app.logger.info("Posting to Threads with image: %s", image_url)
+            result = client.publish_image_post(
+                access_token=token['access_token'],
+                text=post['content'],
+                image_url=image_url,
+            )
+        else:
+            result = client.publish_text_post(
+                access_token=token['access_token'],
+                text=post['content'],
+            )
         
         if result['success']:
             # Mark the post as used
@@ -3184,6 +3428,7 @@ def compose_generate_from_source():
     tone = request.form.get('tone', 'professional')
     posts_per_platform = request.form.get('posts_per_platform', 1, type=int)
     extra_context = request.form.get('extra_context', '').strip() or None
+    image_url = request.form.get('image_url', '').strip() or None
     
     if not source_id:
         return jsonify({"error": "Source ID is required"}), 400
@@ -3236,10 +3481,12 @@ def compose_generate_from_source():
                     source_content=source['url'][:1000],
                     platform=platform,
                     content=post_content,
+                    image_url=image_url,
                 )
                 saved_posts[platform].append({
                     'id': post_id,
                     'content': post_content,
+                    'image_url': image_url,
                 })
         
         return jsonify({
@@ -3285,13 +3532,16 @@ def scheduled_post_worker() -> None:
                     # Get article topic safely from sqlite3.Row
                     article_topic = post['article_topic'] if 'article_topic' in post.keys() else None
                     
-                    # Determine content based on post type
+                    # Determine content and image based on post type
+                    image_url = None
                     if post['post_type'] == 'social' and post['social_content']:
                         content = post['social_content']
+                        image_url = post['social_image_url'] if 'social_image_url' in post.keys() else None
                     elif post['post_type'] == 'article' and post['article_content']:
                         content = f"{post['article_topic']}\n\n{post['article_content'][:2800]}"
                     elif post['post_type'] == 'standalone' and post['standalone_content']:
                         content = post['standalone_content']
+                        image_url = post['standalone_image_url'] if 'standalone_image_url' in post.keys() else None
                     else:
                         app.logger.warning("Scheduled post %d has no content", post['id'])
                         update_scheduled_post_status(
@@ -3338,10 +3588,20 @@ def scheduled_post_worker() -> None:
                                 continue
                         
                         threads_client = get_threads_client()
-                        result = threads_client.publish_text_post(
-                            access_token=threads_token['access_token'],
-                            text=content[:500],  # Threads has 500 char limit
-                        )
+                        
+                        # Use image post if image URL is available
+                        if image_url:
+                            app.logger.info("Posting Threads with image: %s", image_url)
+                            result = threads_client.publish_image_post(
+                                access_token=threads_token['access_token'],
+                                text=content[:500],  # Threads has 500 char limit
+                                image_url=image_url,
+                            )
+                        else:
+                            result = threads_client.publish_text_post(
+                                access_token=threads_token['access_token'],
+                                text=content[:500],  # Threads has 500 char limit
+                            )
                         
                         if result['success']:
                             update_scheduled_post_status(
@@ -3408,12 +3668,23 @@ def scheduled_post_worker() -> None:
                                 continue
                         
                         linkedin_client = get_linkedin_client()
-                        result = linkedin_client.create_smart_post(
-                            access_token=linkedin_token['access_token'],
-                            author_urn=linkedin_token['user_urn'],
-                            text=content[:3000],
-                            article_title=article_topic,
-                        )
+                        
+                        # Use image post if image URL is available and no URL in content
+                        if image_url and not linkedin_client.extract_first_url(content):
+                            app.logger.info("Posting LinkedIn with image: %s", image_url)
+                            result = linkedin_client.create_image_post(
+                                access_token=linkedin_token['access_token'],
+                                author_urn=linkedin_token['user_urn'],
+                                text=content[:3000],
+                                image_url=image_url,
+                            )
+                        else:
+                            result = linkedin_client.create_smart_post(
+                                access_token=linkedin_token['access_token'],
+                                author_urn=linkedin_token['user_urn'],
+                                text=content[:3000],
+                                article_title=article_topic,
+                            )
                         
                         if result['success']:
                             update_scheduled_post_status(

@@ -383,6 +383,198 @@ class ThreadsClient:
 
         return self.publish_text_post(access_token, full_text)
 
+    def publish_image_post(
+        self,
+        access_token: str,
+        text: str,
+        image_url: str,
+        reply_control: str = "everyone",
+    ) -> dict:
+        """Publish an image post to Threads.
+
+        Args:
+            access_token: Valid Threads access token
+            text: The post content/caption (max 500 characters)
+            image_url: Public URL of the image to post (must be accessible by Threads servers)
+            reply_control: Who can reply - "everyone", "accounts_you_follow", "mentioned_only"
+
+        Returns:
+            Dict with success status and post details
+        """
+        import time
+
+        # Truncate text if needed (Threads has 500 char limit)
+        if len(text) > 500:
+            text = text[:497] + "..."
+            logger.warning("Threads post truncated to 500 characters")
+
+        params = {
+            "text": text,
+            "media_type": "IMAGE",
+            "image_url": image_url,
+            "access_token": access_token,
+        }
+
+        try:
+            # Step 1: Create media container with image
+            logger.info("Creating Threads image container with image: %s", image_url)
+            response = requests.post(
+                f"{THREADS_API_HOST}/me/threads",
+                params=params,
+                timeout=30,
+            )
+
+            if response.status_code != 200:
+                error_data = {}
+                try:
+                    error_data = response.json()
+                except Exception:
+                    error_data = {"raw": response.text}
+                logger.error(
+                    "Threads image container creation failed: %s - %s",
+                    response.status_code,
+                    error_data,
+                )
+                return {
+                    "success": False,
+                    "status_code": response.status_code,
+                    "error": error_data,
+                }
+
+            container_data = response.json()
+            container_id = container_data.get("id")
+
+            if not container_id:
+                return {
+                    "success": False,
+                    "error": {"message": "No container ID returned"},
+                }
+
+            # Step 2: Poll container status until FINISHED
+            # Image containers take longer to process than text
+            max_retries = 30  # More retries for image processing
+            poll_interval = 1.0  # seconds
+
+            for attempt in range(max_retries):
+                status_params = {
+                    "fields": "status,error_message",
+                    "access_token": access_token,
+                }
+                status_response = requests.get(
+                    f"{THREADS_API_HOST}/{container_id}",
+                    params=status_params,
+                    timeout=10,
+                )
+
+                if status_response.status_code == 200:
+                    status_data = status_response.json()
+                    container_status = status_data.get("status")
+
+                    if container_status == "FINISHED":
+                        logger.debug("Image container %s is ready (attempt %d)", container_id, attempt + 1)
+                        break
+                    elif container_status == "ERROR":
+                        error_msg = status_data.get("error_message", "Image container processing failed")
+                        logger.error("Image container %s failed: %s", container_id, error_msg)
+                        return {
+                            "success": False,
+                            "error": {"message": error_msg},
+                        }
+                    elif container_status == "EXPIRED":
+                        logger.error("Image container %s expired", container_id)
+                        return {
+                            "success": False,
+                            "error": {"message": "Container expired before publishing"},
+                        }
+                    elif container_status == "PUBLISHED":
+                        logger.warning("Image container %s already published", container_id)
+                        return {
+                            "success": False,
+                            "error": {"message": "Container already published"},
+                        }
+                    else:
+                        # IN_PROGRESS or other status, wait and retry
+                        logger.debug("Image container %s status: %s, waiting...", container_id, container_status)
+                        time.sleep(poll_interval)
+                else:
+                    logger.warning("Failed to check image container status: %s", status_response.status_code)
+                    time.sleep(poll_interval)
+            else:
+                # Exhausted retries
+                logger.error("Image container %s not ready after %d attempts", container_id, max_retries)
+                return {
+                    "success": False,
+                    "error": {"message": "Image processing timed out"},
+                }
+
+            # Step 3: Publish the container
+            publish_params = {
+                "creation_id": container_id,
+                "access_token": access_token,
+            }
+
+            publish_response = requests.post(
+                f"{THREADS_API_HOST}/me/threads_publish",
+                params=publish_params,
+                timeout=30,
+            )
+
+            if publish_response.status_code == 200:
+                publish_data = publish_response.json()
+                post_id = publish_data.get("id")
+
+                # Fetch post details to get permalink and shortcode
+                permalink = None
+                shortcode = None
+                if post_id:
+                    try:
+                        details_params = {
+                            "fields": "permalink,shortcode",
+                            "access_token": access_token,
+                        }
+                        details_response = requests.get(
+                            f"{THREADS_API_HOST}/{post_id}",
+                            params=details_params,
+                            timeout=10,
+                        )
+                        if details_response.status_code == 200:
+                            details_data = details_response.json()
+                            permalink = details_data.get("permalink")
+                            shortcode = details_data.get("shortcode")
+                    except Exception as e:
+                        logger.warning("Failed to fetch post details: %s", e)
+
+                return {
+                    "success": True,
+                    "post_id": post_id,
+                    "shortcode": shortcode,
+                    "permalink": permalink,
+                    "status_code": publish_response.status_code,
+                }
+            else:
+                error_data = {}
+                try:
+                    error_data = publish_response.json()
+                except Exception:
+                    error_data = {"raw": publish_response.text}
+                logger.error(
+                    "Threads image publish failed: %s - %s",
+                    publish_response.status_code,
+                    error_data,
+                )
+                return {
+                    "success": False,
+                    "status_code": publish_response.status_code,
+                    "error": error_data,
+                }
+
+        except requests.RequestException as e:
+            logger.error("Threads image API request failed: %s", e)
+            return {
+                "success": False,
+                "error": {"message": str(e)},
+            }
+
     def get_publishing_limit(self, access_token: str) -> dict | None:
         """Check the user's publishing rate limit.
 

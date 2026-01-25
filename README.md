@@ -5,12 +5,12 @@
 <h1 align="center">PodInsights</h1>
 
 <p align="center">
-  <strong>AI-Powered Podcast Transcription, Summarization & Action Item Extraction Tool</strong>
+  <strong>AI-Powered Podcast Transcription, Summarization & Social Media Command Center</strong>
 </p>
 
 ---
 
-PodInsights is the ultimate podcast analysis tool for creators, researchers, and business professionals who need to extract valuable insights from audio content. Our tool combines state-of-the-art speech recognition with powerful AI summarization to transform hours of podcast content into actionable intelligence.
+PodInsights is the ultimate podcast analysis and social media content creation tool for creators, researchers, and business professionals. Our tool combines state-of-the-art speech recognition with powerful AI to transform podcast content into actionable intelligence and platform-ready social media posts.
 
 ### Key Features
 
@@ -19,9 +19,14 @@ PodInsights is the ultimate podcast analysis tool for creators, researchers, and
 - **Action Item Extraction** - Never miss important tasks or follow-ups mentioned in podcast discussions
 - **Article Generation** - Transform podcast content into polished blog posts and articles on tech, privacy, and cybersecurity topics
 - **Social Media Content** - Auto-generate platform-optimized social media posts from your articles
+- **Command Center** - Your central hub for AI-powered social media content creation:
+  - Generate posts from freeform prompts, URLs, or existing text
+  - Save URL sources for future content generation
+  - Create multiple posts at once for different platforms
+  - Direct posting or queue scheduling
 - **LinkedIn Integration** - Post social media content directly to LinkedIn with rich link previews
 - **Threads Integration** - Post social media content directly to Threads (Meta)
-- **Post Scheduling** - Queue posts with configurable time slots for automated publishing to LinkedIn or Threads
+- **Advanced Post Scheduling** - Queue posts with configurable time slots, drag-and-drop reordering, and automated publishing
 - **JIRA Integration** - Seamlessly create tickets from extracted action items for project management
 - **RSS Feed Support** - Process entire podcast feeds directly from their source
 
@@ -33,8 +38,10 @@ PodInsights is the ultimate podcast analysis tool for creators, researchers, and
 - Podcast fans who want to quickly understand episode content before listening
 - Knowledge workers converting audio information into structured text data
 - Marketing teams scheduling social media content from podcast insights
+- Social media managers generating and scheduling posts from any URL or topic
+- Thought leaders building content queues for consistent social media presence
 
-*PodInsights - Transforming podcast content into actionable intelligence.*
+*PodInsights - Transforming podcast content into actionable intelligence and engaging social media content.*
 
 ## Screenshots
 
@@ -67,6 +74,14 @@ Access all generated articles in one place.
 
 ### JIRA Tickets
 View and manage JIRA tickets created from action items.
+
+
+### Command Center (Compose)
+Generate social media posts from any source - prompts, URLs, or text. Save URL sources for future use and manage your content pipeline.
+
+
+### Schedule Queue
+View and manage your posting queue with drag-and-drop reordering, status/platform filters, and automated time slot management.
 
 
 ---
@@ -361,6 +376,59 @@ From any article page, you can:
 - **Post to Threads** - Click the 🧵 button next to any generated social post
 - **Add to Queue** - Click the ➕ button and select "Threads" to schedule for the next available time slot
 - **Schedule for Specific Time** - Click the 📅 button, select "Threads", and pick a custom date/time
+
+### Command Center
+
+The Command Center is your central hub for AI-powered social media content creation. Access it from the **Compose** link in the navigation.
+
+#### Generating Posts
+
+Create posts from multiple sources using the tabbed interface:
+
+1. **From Prompt** - Enter any topic or idea and let AI generate platform-optimized posts
+2. **From URL** - Paste a URL and the system extracts content to generate relevant posts
+3. **From Text** - Paste existing content and transform it into social media posts
+4. **From Saved Source** - Use previously saved URL content with additional instructions
+
+For each generation:
+- Select target platforms (LinkedIn, Threads, etc.)
+- Choose how many posts to generate (1-10)
+- Add optional context or instructions to guide the AI
+
+#### Managing Generated Posts
+
+Each generated post includes action buttons:
+- **📋 Copy** - Copy post content to clipboard
+- **✏️ Edit** - Modify the post content
+- **○/✓ Mark Used** - Track which posts you've used
+- **💼/🧵 Post Now** - Immediately publish to LinkedIn or Threads
+- **➕/✅ Queue Toggle** - Add to or remove from the schedule queue
+- **📅 Schedule** - Pick a specific date/time for posting
+- **🗑️ Delete** - Remove the post
+
+#### URL Sources
+
+When generating posts from URLs, the extracted content is automatically saved. Access saved sources from the **Sources** page to:
+- View previously extracted content
+- Generate new posts with different instructions
+- Build a library of content sources for future use
+
+### Schedule Management
+
+The Schedule page provides comprehensive queue management:
+
+#### Time Slots
+- Configure recurring posting times (daily or specific days)
+- Set daily posting limits per platform
+- View next available slots for each platform
+
+#### Queue Features
+- **Drag-and-drop reordering** - Rearrange posts by dragging the grip handle (⋮⋮)
+- **Filter by status** - View pending, posted, failed, or cancelled posts
+- **Filter by platform** - Show only LinkedIn or Threads posts
+- **Post Now** - Immediately publish any pending post (remaining posts auto-redistribute)
+- **Edit time** - Change the scheduled time for any pending post
+- **Bulk actions** - Select and delete multiple posts at once
 
 ## Credits
 

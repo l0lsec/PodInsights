@@ -117,6 +117,13 @@
         border-color: transparent;
     }
     
+    /* Library image hover styles */
+    .library-image:hover {
+        border-color: #0d6efd !important;
+        transform: scale(1.05);
+        transition: all 0.15s ease;
+    }
+    
     /* Loading state */
     .generating-overlay {
         position: absolute;
@@ -393,6 +400,86 @@
             </div>
         </div>
         
+        <!-- Bulk Image -->
+        <div class="mb-4">
+            <label class="form-label fw-bold">
+                🖼️ Image (Optional)
+            </label>
+            
+            <!-- Image Source Tabs -->
+            <ul class="nav nav-pills nav-fill mb-3" id="imageSourceTabs" role="tablist" style="font-size: 0.85rem;">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active py-2" id="image-upload-tab" data-bs-toggle="pill" data-bs-target="#image-upload-pane" type="button" role="tab">
+                        📁 Upload File
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link py-2" id="image-url-tab" data-bs-toggle="pill" data-bs-target="#image-url-pane" type="button" role="tab">
+                        🔗 From URL
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link py-2" id="image-library-tab" data-bs-toggle="pill" data-bs-target="#image-library-pane" type="button" role="tab" onclick="loadImageLibrary('bulk')">
+                        📚 From Library
+                    </button>
+                </li>
+            </ul>
+            
+            <div class="tab-content">
+                <!-- Upload File Tab -->
+                <div class="tab-pane fade show active" id="image-upload-pane" role="tabpanel">
+                    <div class="input-group">
+                        <input type="file" class="form-control" id="bulk-image-file" 
+                            accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                            onchange="handleImageFileSelect(this)">
+                        <button class="btn btn-outline-secondary" type="button" onclick="clearBulkImageFile()" title="Clear Image">
+                            ✕
+                        </button>
+                    </div>
+                    <small class="text-muted">Upload an image from your computer (max 16MB)</small>
+                    <div id="upload-progress" class="mt-2 d-none">
+                        <div class="progress" style="height: 20px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%">
+                                Uploading...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- URL Tab -->
+                <div class="tab-pane fade" id="image-url-pane" role="tabpanel">
+                    <div class="input-group">
+                        <input type="url" class="form-control" id="bulk-image-url" 
+                            placeholder="https://example.com/image.jpg">
+                        <button class="btn btn-outline-secondary" type="button" onclick="previewBulkImage()" title="Preview Image">
+                            👁️
+                        </button>
+                        <button class="btn btn-outline-secondary" type="button" onclick="clearBulkImage()" title="Clear Image">
+                            ✕
+                        </button>
+                    </div>
+                    <small class="text-muted">Enter a public URL accessible by LinkedIn/Threads</small>
+                </div>
+                
+                <!-- Library Tab -->
+                <div class="tab-pane fade" id="image-library-pane" role="tabpanel">
+                    <div id="image-library-grid" class="d-flex flex-wrap gap-2" style="max-height: 200px; overflow-y: auto;">
+                        <div class="text-muted small">Loading images...</div>
+                    </div>
+                    <small class="text-muted mt-1 d-block">Click an image to select it</small>
+                </div>
+            </div>
+            
+            <!-- Shared Preview Area -->
+            <div id="bulk-image-preview" class="mt-2 d-none">
+                <img src="" alt="Image preview" class="img-thumbnail" style="max-height: 150px;">
+                <span id="bulk-image-filename" class="ms-2 text-muted small"></span>
+            </div>
+            
+            <!-- Hidden field to store the final image URL (from upload or URL input) -->
+            <input type="hidden" id="final-image-url" value="">
+        </div>
+        
         <!-- Tone Selection -->
         <div class="mb-4">
             <label class="form-label fw-bold mb-3">Tone & Style</label>
@@ -458,7 +545,7 @@
         <span class="badge bg-light text-dark" id="posts-count">{{ total_posts.count }} saved post{% if total_posts.count != 1 %}s{% endif %}</span>
     </div>
     <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
             <h6 class="mb-0">💾 Saved Posts</h6>
             <div class="d-flex gap-2 flex-wrap">
                 <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-select-mode" onclick="toggleSelectMode()">
@@ -481,6 +568,29 @@
                 </button>
             </div>
         </div>
+        
+        <!-- Filter Bar -->
+        <div class="d-flex gap-2 mb-3 flex-wrap align-items-center" id="posts-filter-bar">
+            <span class="text-muted small">Filter:</span>
+            <select class="form-select form-select-sm" style="width: auto;" id="filter-used" onchange="applyPostFilters()">
+                <option value="">All Status</option>
+                <option value="used">✓ Used</option>
+                <option value="unused">○ Unused</option>
+            </select>
+            <select class="form-select form-select-sm" style="width: auto;" id="filter-queued" onchange="applyPostFilters()">
+                <option value="">All Queue</option>
+                <option value="queued">✅ Queued</option>
+                <option value="not-queued">➕ Not Queued</option>
+            </select>
+            <select class="form-select form-select-sm" style="width: auto;" id="filter-platform" onchange="applyPostFilters()">
+                <option value="">All Platforms</option>
+                <option value="linkedin">💼 LinkedIn</option>
+                <option value="threads">🧵 Threads</option>
+            </select>
+            <button class="btn btn-sm btn-outline-secondary" onclick="clearPostFilters()" title="Clear Filters">✕</button>
+            <span class="text-muted small ms-2" id="filter-results-count"></span>
+        </div>
+        
         <div id="saved-posts-container">
             {% for platform, posts in posts_by_platform.items() %}
             <div class="social-copy-card mb-3" data-platform="{{ platform }}">
@@ -567,6 +677,112 @@
                         </div>
                         <div class="post-content-wrapper">
                             <pre class="social-copy-text" id="saved-post-{{ post.id }}">{{ post.content }}</pre>
+                            <!-- Image attachment section -->
+                            <div class="post-image-section mt-2" id="image-section-{{ post.id }}">
+                                {% if post.image_url %}
+                                <div class="d-flex align-items-center gap-2 mb-2" id="image-preview-{{ post.id }}">
+                                    <img src="{{ post.image_url }}" alt="Post image" class="img-thumbnail" style="max-height: 60px; max-width: 100px;">
+                                    <span class="text-muted small text-truncate" style="max-width: 200px;">{{ post.image_url }}</span>
+                                    <button class="btn btn-sm btn-outline-warning" onclick="editPostImage({{ post.id }})" title="Change Image">
+                                        ✏️
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger" onclick="removePostImage({{ post.id }})" title="Remove Image">
+                                        ✕
+                                    </button>
+                                </div>
+                                {% else %}
+                                <div id="image-preview-{{ post.id }}" class="d-none">
+                                    <div class="d-flex align-items-center gap-2 mb-2">
+                                        <img src="" alt="Post image" class="img-thumbnail" style="max-height: 60px; max-width: 100px;">
+                                        <span class="text-muted small text-truncate" style="max-width: 200px;"></span>
+                                        <button class="btn btn-sm btn-outline-warning" onclick="editPostImage({{ post.id }})" title="Change Image">
+                                            ✏️
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="removePostImage({{ post.id }})" title="Remove Image">
+                                            ✕
+                                        </button>
+                                    </div>
+                                </div>
+                                {% endif %}
+                                <div class="image-edit-form d-none" id="image-edit-form-{{ post.id }}">
+                                    <!-- Image Source Tabs for Individual Post -->
+                                    <ul class="nav nav-pills nav-fill mb-2" style="font-size: 0.75rem;">
+                                        <li class="nav-item">
+                                            <button class="nav-link active py-1 px-2" type="button" 
+                                                onclick="switchPostImageTab({{ post.id }}, 'upload')" 
+                                                id="post-upload-tab-{{ post.id }}">
+                                                📁 Upload
+                                            </button>
+                                        </li>
+                                        <li class="nav-item">
+                                            <button class="nav-link py-1 px-2" type="button" 
+                                                onclick="switchPostImageTab({{ post.id }}, 'url')" 
+                                                id="post-url-tab-{{ post.id }}">
+                                                🔗 URL
+                                            </button>
+                                        </li>
+                                        <li class="nav-item">
+                                            <button class="nav-link py-1 px-2" type="button" 
+                                                onclick="switchPostImageTab({{ post.id }}, 'library')" 
+                                                id="post-library-tab-{{ post.id }}">
+                                                📚 Library
+                                            </button>
+                                        </li>
+                                    </ul>
+                                    
+                                    <!-- Upload File Pane -->
+                                    <div id="post-upload-pane-{{ post.id }}">
+                                        <div class="input-group input-group-sm">
+                                            <input type="file" class="form-control form-control-sm" 
+                                                id="image-file-input-{{ post.id }}"
+                                                accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                                                onchange="handlePostImageFileSelect({{ post.id }}, this)">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="cancelImageEdit({{ post.id }})">
+                                                ✕
+                                            </button>
+                                        </div>
+                                        <div id="post-upload-progress-{{ post.id }}" class="mt-1 d-none">
+                                            <div class="progress" style="height: 16px;">
+                                                <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%; font-size: 0.7rem;">
+                                                    Uploading...
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- URL Pane -->
+                                    <div id="post-url-pane-{{ post.id }}" class="d-none">
+                                        <div class="input-group input-group-sm">
+                                            <input type="url" class="form-control" id="image-url-input-{{ post.id }}" 
+                                                   placeholder="https://example.com/image.jpg" value="{{ post.image_url or '' }}">
+                                            <button class="btn btn-outline-secondary" type="button" onclick="previewPostImage({{ post.id }})" title="Preview">
+                                                👁️
+                                            </button>
+                                            <button class="btn btn-success" type="button" onclick="savePostImage({{ post.id }})">
+                                                💾
+                                            </button>
+                                            <button class="btn btn-outline-secondary" type="button" onclick="cancelImageEdit({{ post.id }})">
+                                                ✕
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Library Pane -->
+                                    <div id="post-library-pane-{{ post.id }}" class="d-none">
+                                        <div id="post-library-grid-{{ post.id }}" class="d-flex flex-wrap gap-1" style="max-height: 120px; overflow-y: auto;">
+                                            <div class="text-muted small">Loading...</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Hidden field for final URL -->
+                                    <input type="hidden" id="post-final-image-url-{{ post.id }}" value="{{ post.image_url or '' }}">
+                                </div>
+                                {% if not post.image_url %}
+                                <button class="btn btn-sm btn-outline-secondary add-image-btn" onclick="editPostImage({{ post.id }})" id="add-image-btn-{{ post.id }}">
+                                    🖼️ Add Image
+                                </button>
+                                {% endif %}
+                            </div>
                             <div class="edit-form d-none" id="edit-form-{{ post.id }}">
                                 <textarea class="form-control mb-2" id="edit-textarea-{{ post.id }}" rows="4">{{ post.content }}</textarea>
                                 <div class="d-flex gap-2">
@@ -788,6 +1004,110 @@ function adjustPostCount(delta) {
     input.value = value;
 }
 
+function previewBulkImage() {
+    const input = document.getElementById('bulk-image-url');
+    const preview = document.getElementById('bulk-image-preview');
+    const img = preview.querySelector('img');
+    const filenameSpan = document.getElementById('bulk-image-filename');
+    
+    if (input.value.trim()) {
+        img.src = input.value.trim();
+        img.onerror = function() {
+            preview.classList.add('d-none');
+            document.getElementById('final-image-url').value = '';
+            showToast('Could not load image. Make sure the URL is valid and publicly accessible.', 'error');
+        };
+        img.onload = function() {
+            preview.classList.remove('d-none');
+            filenameSpan.textContent = '';
+            // Store URL in hidden field
+            document.getElementById('final-image-url').value = input.value.trim();
+        };
+    } else {
+        preview.classList.add('d-none');
+        document.getElementById('final-image-url').value = '';
+    }
+}
+
+function clearBulkImage() {
+    document.getElementById('bulk-image-url').value = '';
+    document.getElementById('bulk-image-preview').classList.add('d-none');
+    document.getElementById('bulk-image-filename').textContent = '';
+    document.getElementById('final-image-url').value = '';
+}
+
+function handleImageFileSelect(input) {
+    const file = input.files[0];
+    if (!file) return;
+    
+    // Validate file type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+        showToast('Invalid file type. Please upload PNG, JPG, GIF, or WebP.', 'error');
+        input.value = '';
+        return;
+    }
+    
+    // Validate file size (16MB max)
+    if (file.size > 16 * 1024 * 1024) {
+        showToast('File too large. Maximum size is 16MB.', 'error');
+        input.value = '';
+        return;
+    }
+    
+    // Show upload progress
+    document.getElementById('upload-progress').classList.remove('d-none');
+    
+    // Upload the file
+    const formData = new FormData();
+    formData.append('image', file);
+    
+    fetch('{{ url_for("compose_upload_image") }}', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById('upload-progress').classList.add('d-none');
+        
+        if (data.success) {
+            // Store the URL in hidden field
+            document.getElementById('final-image-url').value = data.image_url;
+            
+            // Show preview
+            const preview = document.getElementById('bulk-image-preview');
+            const img = preview.querySelector('img');
+            const filenameSpan = document.getElementById('bulk-image-filename');
+            
+            img.src = data.image_url;
+            filenameSpan.textContent = file.name;
+            preview.classList.remove('d-none');
+            
+            showToast('Image uploaded successfully!', 'success');
+            
+            // Show warning if image stored locally (won't work with Threads)
+            if (data.warning) {
+                showToast(data.warning, 'warning');
+            }
+        } else {
+            showToast('Upload failed: ' + (data.error || 'Unknown error'), 'error');
+            input.value = '';
+        }
+    })
+    .catch(error => {
+        document.getElementById('upload-progress').classList.add('d-none');
+        showToast('Upload failed: ' + error.message, 'error');
+        input.value = '';
+    });
+}
+
+function clearBulkImageFile() {
+    document.getElementById('bulk-image-file').value = '';
+    document.getElementById('bulk-image-preview').classList.add('d-none');
+    document.getElementById('bulk-image-filename').textContent = '';
+    document.getElementById('final-image-url').value = '';
+}
+
 function getActiveSourceType() {
     const activeTab = document.querySelector('#sourceTypeTabs .nav-link.active');
     if (activeTab.id === 'freeform-tab') return 'freeform';
@@ -860,6 +1180,12 @@ function generatePosts() {
     if (extraContext) formData.append('extra_context', extraContext);
     platforms.forEach(p => formData.append('platforms', p));
     
+    // Include image URL if provided (from upload or URL input)
+    const finalImageUrl = document.getElementById('final-image-url').value.trim();
+    if (finalImageUrl) {
+        formData.append('image_url', finalImageUrl);
+    }
+    
     // Use different endpoint for saved sources
     let endpoint;
     if (sourceType === 'saved_source') {
@@ -930,6 +1256,293 @@ function cancelPostEdit(postId) {
     
     textEl.classList.remove('d-none');
     formEl.classList.add('d-none');
+}
+
+// Image management functions
+function editPostImage(postId) {
+    const editForm = document.getElementById(`image-edit-form-${postId}`);
+    const addBtn = document.getElementById(`add-image-btn-${postId}`);
+    
+    // Reset to upload tab by default
+    switchPostImageTab(postId, 'upload');
+    
+    // Clear file input
+    const fileInput = document.getElementById(`image-file-input-${postId}`);
+    if (fileInput) fileInput.value = '';
+    
+    editForm.classList.remove('d-none');
+    if (addBtn) addBtn.classList.add('d-none');
+}
+
+function cancelImageEdit(postId) {
+    const editForm = document.getElementById(`image-edit-form-${postId}`);
+    const addBtn = document.getElementById(`add-image-btn-${postId}`);
+    const preview = document.getElementById(`image-preview-${postId}`);
+    
+    // Clear file input
+    const fileInput = document.getElementById(`image-file-input-${postId}`);
+    if (fileInput) fileInput.value = '';
+    
+    // Hide upload progress if visible
+    const uploadProgress = document.getElementById(`post-upload-progress-${postId}`);
+    if (uploadProgress) uploadProgress.classList.add('d-none');
+    
+    editForm.classList.add('d-none');
+    
+    // Show add button only if no image is currently set
+    if (addBtn && preview.classList.contains('d-none')) {
+        addBtn.classList.remove('d-none');
+    }
+}
+
+function previewPostImage(postId) {
+    const input = document.getElementById(`image-url-input-${postId}`);
+    const preview = document.getElementById(`image-preview-${postId}`);
+    const img = preview.querySelector('img');
+    
+    if (input.value.trim()) {
+        img.src = input.value.trim();
+        img.onerror = function() {
+            showToast('Could not load image. Make sure the URL is valid.', 'error');
+        };
+        img.onload = function() {
+            preview.classList.remove('d-none');
+            preview.querySelector('span').textContent = input.value.trim();
+        };
+    }
+}
+
+function savePostImage(postId) {
+    const input = document.getElementById(`image-url-input-${postId}`);
+    const imageUrl = input.value.trim();
+    
+    fetch(`/compose/post/${postId}/image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `image_url=${encodeURIComponent(imageUrl)}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const preview = document.getElementById(`image-preview-${postId}`);
+            const editForm = document.getElementById(`image-edit-form-${postId}`);
+            const addBtn = document.getElementById(`add-image-btn-${postId}`);
+            
+            if (imageUrl) {
+                preview.querySelector('img').src = imageUrl;
+                preview.querySelector('span').textContent = imageUrl;
+                preview.classList.remove('d-none');
+                if (addBtn) addBtn.classList.add('d-none');
+            } else {
+                preview.classList.add('d-none');
+                if (addBtn) addBtn.classList.remove('d-none');
+            }
+            
+            editForm.classList.add('d-none');
+            showToast(imageUrl ? 'Image saved!' : 'Image removed!', 'success');
+        } else {
+            showToast('Error: ' + (data.error || 'Failed to save image'), 'error');
+        }
+    })
+    .catch(error => {
+        showToast('Error: ' + error.message, 'error');
+    });
+}
+
+function removePostImage(postId) {
+    if (!confirm('Remove the image from this post?')) return;
+    
+    document.getElementById(`image-url-input-${postId}`).value = '';
+    document.getElementById(`post-final-image-url-${postId}`).value = '';
+    savePostImage(postId);
+}
+
+// Image library functions
+let cachedImages = null;
+
+function loadImageLibrary(context, postId = null) {
+    const gridId = context === 'bulk' ? 'image-library-grid' : `post-library-grid-${postId}`;
+    const grid = document.getElementById(gridId);
+    
+    if (!grid) return;
+    
+    // Use cached images if available
+    if (cachedImages) {
+        renderImageGrid(grid, cachedImages, context, postId);
+        return;
+    }
+    
+    grid.innerHTML = '<div class="text-muted small">Loading images...</div>';
+    
+    fetch('/compose/list-images')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                cachedImages = data.images;
+                renderImageGrid(grid, data.images, context, postId);
+            } else {
+                grid.innerHTML = '<div class="text-muted small">Failed to load images</div>';
+            }
+        })
+        .catch(error => {
+            grid.innerHTML = '<div class="text-muted small">Error loading images</div>';
+        });
+}
+
+function renderImageGrid(grid, images, context, postId) {
+    if (images.length === 0) {
+        grid.innerHTML = '<div class="text-muted small">No uploaded images yet</div>';
+        return;
+    }
+    
+    grid.innerHTML = images.map(img => `
+        <img src="${img.url}" 
+             class="img-thumbnail library-image" 
+             style="width: 60px; height: 60px; object-fit: cover; cursor: pointer;"
+             onclick="selectLibraryImage('${img.url}', '${context}', ${postId || 'null'})"
+             title="${img.filename}">
+    `).join('');
+}
+
+function selectLibraryImage(url, context, postId) {
+    if (context === 'bulk') {
+        // Set the URL in the hidden field
+        document.getElementById('final-image-url').value = url;
+        
+        // Show preview
+        const preview = document.getElementById('bulk-image-preview');
+        const img = preview.querySelector('img');
+        img.src = url;
+        document.getElementById('bulk-image-filename').textContent = 'From library';
+        preview.classList.remove('d-none');
+        
+        showToast('Image selected from library', 'success');
+    } else {
+        // Individual post - save directly
+        document.getElementById(`image-url-input-${postId}`).value = url;
+        document.getElementById(`post-final-image-url-${postId}`).value = url;
+        savePostImageWithUrl(postId, url);
+        showToast('Image selected and saved!', 'success');
+    }
+}
+
+function switchPostImageTab(postId, tab) {
+    const uploadTab = document.getElementById(`post-upload-tab-${postId}`);
+    const urlTab = document.getElementById(`post-url-tab-${postId}`);
+    const libraryTab = document.getElementById(`post-library-tab-${postId}`);
+    const uploadPane = document.getElementById(`post-upload-pane-${postId}`);
+    const urlPane = document.getElementById(`post-url-pane-${postId}`);
+    const libraryPane = document.getElementById(`post-library-pane-${postId}`);
+    
+    // Reset all tabs
+    [uploadTab, urlTab, libraryTab].forEach(t => t && t.classList.remove('active'));
+    [uploadPane, urlPane, libraryPane].forEach(p => p && p.classList.add('d-none'));
+    
+    if (tab === 'upload') {
+        uploadTab.classList.add('active');
+        uploadPane.classList.remove('d-none');
+    } else if (tab === 'url') {
+        urlTab.classList.add('active');
+        urlPane.classList.remove('d-none');
+        document.getElementById(`image-url-input-${postId}`).focus();
+    } else if (tab === 'library') {
+        libraryTab.classList.add('active');
+        libraryPane.classList.remove('d-none');
+        loadImageLibrary('post', postId);
+    }
+}
+
+function handlePostImageFileSelect(postId, input) {
+    const file = input.files[0];
+    if (!file) return;
+    
+    // Validate file type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+        showToast('Invalid file type. Please upload PNG, JPG, GIF, or WebP.', 'error');
+        input.value = '';
+        return;
+    }
+    
+    // Validate file size (16MB max)
+    if (file.size > 16 * 1024 * 1024) {
+        showToast('File too large. Maximum size is 16MB.', 'error');
+        input.value = '';
+        return;
+    }
+    
+    // Show upload progress
+    document.getElementById(`post-upload-progress-${postId}`).classList.remove('d-none');
+    
+    // Upload the file
+    const formData = new FormData();
+    formData.append('image', file);
+    
+    fetch('{{ url_for("compose_upload_image") }}', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById(`post-upload-progress-${postId}`).classList.add('d-none');
+        
+        if (data.success) {
+            // Store the URL and save to the post
+            document.getElementById(`image-url-input-${postId}`).value = data.image_url;
+            document.getElementById(`post-final-image-url-${postId}`).value = data.image_url;
+            
+            // Save the image to the post
+            savePostImageWithUrl(postId, data.image_url);
+            
+            showToast('Image uploaded and saved!', 'success');
+            
+            // Show warning if image stored locally (won't work with Threads)
+            if (data.warning) {
+                showToast(data.warning, 'warning');
+            }
+        } else {
+            showToast('Upload failed: ' + (data.error || 'Unknown error'), 'error');
+            input.value = '';
+        }
+    })
+    .catch(error => {
+        document.getElementById(`post-upload-progress-${postId}`).classList.add('d-none');
+        showToast('Upload failed: ' + error.message, 'error');
+        input.value = '';
+    });
+}
+
+function savePostImageWithUrl(postId, imageUrl) {
+    fetch(`/compose/post/${postId}/image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `image_url=${encodeURIComponent(imageUrl)}`
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const preview = document.getElementById(`image-preview-${postId}`);
+            const editForm = document.getElementById(`image-edit-form-${postId}`);
+            const addBtn = document.getElementById(`add-image-btn-${postId}`);
+            
+            if (imageUrl) {
+                preview.querySelector('img').src = imageUrl;
+                preview.querySelector('span').textContent = imageUrl;
+                preview.classList.remove('d-none');
+                if (addBtn) addBtn.classList.add('d-none');
+            } else {
+                preview.classList.add('d-none');
+                if (addBtn) addBtn.classList.remove('d-none');
+            }
+            
+            editForm.classList.add('d-none');
+        } else {
+            showToast('Error: ' + (data.error || 'Failed to save image'), 'error');
+        }
+    })
+    .catch(error => {
+        showToast('Error: ' + error.message, 'error');
+    });
 }
 
 function savePostEdit(postId) {
@@ -1624,6 +2237,75 @@ function showToast(message, type = 'info') {
     
     document.body.appendChild(toast);
     setTimeout(() => { if (toast.parentNode) toast.remove(); }, 3000);
+}
+
+// Post filtering functions
+function applyPostFilters() {
+    const usedFilter = document.getElementById('filter-used').value;
+    const queuedFilter = document.getElementById('filter-queued').value;
+    const platformFilter = document.getElementById('filter-platform').value;
+    
+    const cards = document.querySelectorAll('#saved-posts-container .social-copy-card');
+    let visiblePosts = 0;
+    let totalPosts = 0;
+    
+    cards.forEach(card => {
+        const platform = card.dataset.platform;
+        const posts = card.querySelectorAll('.post-item');
+        let visibleInCard = 0;
+        
+        posts.forEach(post => {
+            totalPosts++;
+            let show = true;
+            
+            // Platform filter (card level)
+            if (platformFilter && platform !== platformFilter) {
+                show = false;
+            }
+            
+            // Used filter
+            if (usedFilter && show) {
+                const usedBtn = post.querySelector('button[onclick*="toggleUsed"]');
+                const isUsed = usedBtn && usedBtn.innerHTML.includes('✓');
+                if (usedFilter === 'used' && !isUsed) show = false;
+                if (usedFilter === 'unused' && isUsed) show = false;
+            }
+            
+            // Queued filter
+            if (queuedFilter && show) {
+                const queueBtn = post.querySelector('.queue-toggle-btn');
+                const isQueued = queueBtn && queueBtn.dataset.queued === 'true';
+                if (queuedFilter === 'queued' && !isQueued) show = false;
+                if (queuedFilter === 'not-queued' && isQueued) show = false;
+            }
+            
+            post.style.display = show ? '' : 'none';
+            if (show) {
+                visiblePosts++;
+                visibleInCard++;
+            }
+        });
+        
+        // Hide card if no visible posts
+        card.style.display = visibleInCard > 0 ? '' : 'none';
+    });
+    
+    // Update results count
+    const resultsSpan = document.getElementById('filter-results-count');
+    if (resultsSpan) {
+        if (usedFilter || queuedFilter || platformFilter) {
+            resultsSpan.textContent = `Showing ${visiblePosts} of ${totalPosts}`;
+        } else {
+            resultsSpan.textContent = '';
+        }
+    }
+}
+
+function clearPostFilters() {
+    document.getElementById('filter-used').value = '';
+    document.getElementById('filter-queued').value = '';
+    document.getElementById('filter-platform').value = '';
+    applyPostFilters();
 }
 </script>
 {% endblock %}

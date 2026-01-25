@@ -94,12 +94,18 @@ def init_db(db_path: str = DB_PATH) -> None:
                 article_id INTEGER,
                 platform TEXT,
                 content TEXT,
+                image_url TEXT,
                 created_at TEXT,
                 used INTEGER DEFAULT 0,
                 FOREIGN KEY(article_id) REFERENCES articles(id)
             )
             """
         )
+        # Upgrade social_posts table to include image_url if missing
+        cur = conn.execute("PRAGMA table_info(social_posts)")
+        social_columns = [row[1] for row in cur.fetchall()]
+        if "image_url" not in social_columns:
+            conn.execute("ALTER TABLE social_posts ADD COLUMN image_url TEXT")
         # LinkedIn OAuth tokens storage
         conn.execute(
             """
@@ -201,11 +207,17 @@ def init_db(db_path: str = DB_PATH) -> None:
                 source_content TEXT,
                 platform TEXT,
                 content TEXT,
+                image_url TEXT,
                 created_at TEXT,
                 used INTEGER DEFAULT 0
             )
             """
         )
+        # Upgrade standalone_posts table to include image_url if missing
+        cur = conn.execute("PRAGMA table_info(standalone_posts)")
+        standalone_columns = [row[1] for row in cur.fetchall()]
+        if "image_url" not in standalone_columns:
+            conn.execute("ALTER TABLE standalone_posts ADD COLUMN image_url TEXT")
         # URL sources - stores extracted content from URLs for reuse
         conn.execute(
             """
@@ -706,6 +718,7 @@ def add_social_post(
     article_id: int,
     platform: str,
     content: str,
+    image_url: Optional[str] = None,
     db_path: str = DB_PATH,
 ) -> int:
     """Save a generated social media post and return its id."""
@@ -713,10 +726,10 @@ def add_social_post(
     with sqlite3.connect(db_path) as conn:
         cur = conn.execute(
             """
-            INSERT INTO social_posts (article_id, platform, content, created_at, used)
-            VALUES (?, ?, ?, ?, 0)
+            INSERT INTO social_posts (article_id, platform, content, image_url, created_at, used)
+            VALUES (?, ?, ?, ?, ?, 0)
             """,
-            (article_id, platform, content, created_at),
+            (article_id, platform, content, image_url, created_at),
         )
         conn.commit()
         return cur.lastrowid
@@ -1124,9 +1137,11 @@ def get_scheduled_post(scheduled_id: int, db_path: str = DB_PATH) -> Optional[sq
             """
             SELECT sp.*, 
                    soc.content AS social_content, soc.platform AS social_platform,
+                   soc.image_url AS social_image_url,
                    a.topic AS article_topic, a.content AS article_content,
                    a.episode_id,
-                   st.content AS standalone_content, st.platform AS standalone_platform
+                   st.content AS standalone_content, st.platform AS standalone_platform,
+                   st.image_url AS standalone_image_url
             FROM scheduled_posts sp
             LEFT JOIN social_posts soc ON sp.social_post_id = soc.id
             LEFT JOIN articles a ON sp.article_id = a.id
@@ -1215,8 +1230,10 @@ def list_scheduled_posts(
         query = """
             SELECT sp.*, 
                    soc.content AS social_content, soc.platform AS social_platform,
+                   soc.image_url AS social_image_url,
                    a.topic AS article_topic, a.content AS article_content,
-                   st.content AS standalone_content, st.platform AS standalone_platform
+                   st.content AS standalone_content, st.platform AS standalone_platform,
+                   st.image_url AS standalone_image_url
             FROM scheduled_posts sp
             LEFT JOIN social_posts soc ON sp.social_post_id = soc.id
             LEFT JOIN articles a ON sp.article_id = a.id
@@ -1249,9 +1266,11 @@ def get_pending_scheduled_posts(db_path: str = DB_PATH) -> List[sqlite3.Row]:
             """
             SELECT sp.*, 
                    soc.content AS social_content, soc.platform AS social_platform,
+                   soc.image_url AS social_image_url,
                    a.topic AS article_topic, a.content AS article_content,
                    a.episode_id,
-                   st.content AS standalone_content, st.platform AS standalone_platform
+                   st.content AS standalone_content, st.platform AS standalone_platform,
+                   st.image_url AS standalone_image_url
             FROM scheduled_posts sp
             LEFT JOIN social_posts soc ON sp.social_post_id = soc.id
             LEFT JOIN articles a ON sp.article_id = a.id
@@ -1822,6 +1841,7 @@ def add_standalone_post(
     source_content: str,
     platform: str,
     content: str,
+    image_url: Optional[str] = None,
     db_path: str = DB_PATH,
 ) -> int:
     """Save a standalone post (not tied to an article) and return its id.
@@ -1831,6 +1851,7 @@ def add_standalone_post(
         source_content: The original prompt, URL, or text used to generate
         platform: Target platform (e.g., 'linkedin', 'threads', 'twitter')
         content: The generated post content
+        image_url: Optional URL of an image to attach to the post
         
     Returns:
         The ID of the newly created post
@@ -1839,10 +1860,10 @@ def add_standalone_post(
     with sqlite3.connect(db_path) as conn:
         cur = conn.execute(
             """
-            INSERT INTO standalone_posts (source_type, source_content, platform, content, created_at, used)
-            VALUES (?, ?, ?, ?, ?, 0)
+            INSERT INTO standalone_posts (source_type, source_content, platform, content, image_url, created_at, used)
+            VALUES (?, ?, ?, ?, ?, ?, 0)
             """,
-            (source_type, source_content, platform, content, created_at),
+            (source_type, source_content, platform, content, image_url, created_at),
         )
         conn.commit()
         return cur.lastrowid
@@ -1908,17 +1929,74 @@ def get_standalone_post(post_id: int, db_path: str = DB_PATH) -> Optional[sqlite
         return cur.fetchone()
 
 
-def update_standalone_post(post_id: int, content: str, db_path: str = DB_PATH) -> None:
-    """Update the content of a standalone post.
+def update_standalone_post(
+    post_id: int,
+    content: str,
+    image_url: Optional[str] = None,
+    clear_image: bool = False,
+    db_path: str = DB_PATH,
+) -> None:
+    """Update the content and optionally the image of a standalone post.
     
     Args:
         post_id: The post ID
         content: New content for the post
+        image_url: Optional new image URL (only updated if provided or clear_image is True)
+        clear_image: If True, remove the image (set to NULL)
+    """
+    with sqlite3.connect(db_path) as conn:
+        if clear_image:
+            conn.execute(
+                "UPDATE standalone_posts SET content = ?, image_url = NULL WHERE id = ?",
+                (content, post_id),
+            )
+        elif image_url is not None:
+            conn.execute(
+                "UPDATE standalone_posts SET content = ?, image_url = ? WHERE id = ?",
+                (content, image_url, post_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE standalone_posts SET content = ? WHERE id = ?",
+                (content, post_id),
+            )
+        conn.commit()
+
+
+def update_standalone_post_image(
+    post_id: int,
+    image_url: Optional[str],
+    db_path: str = DB_PATH,
+) -> None:
+    """Update only the image URL of a standalone post.
+    
+    Args:
+        post_id: The post ID
+        image_url: New image URL (or None to remove image)
     """
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            "UPDATE standalone_posts SET content = ? WHERE id = ?",
-            (content, post_id),
+            "UPDATE standalone_posts SET image_url = ? WHERE id = ?",
+            (image_url, post_id),
+        )
+        conn.commit()
+
+
+def update_social_post_image(
+    post_id: int,
+    image_url: Optional[str],
+    db_path: str = DB_PATH,
+) -> None:
+    """Update only the image URL of a social post.
+    
+    Args:
+        post_id: The post ID
+        image_url: New image URL (or None to remove image)
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE social_posts SET image_url = ? WHERE id = ?",
+            (image_url, post_id),
         )
         conn.commit()
 
