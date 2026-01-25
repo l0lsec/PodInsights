@@ -233,6 +233,19 @@ def init_db(db_path: str = DB_PATH) -> None:
             )
             """
         )
+        # Uploaded images library - tracks images uploaded to Cloudinary or locally
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS uploaded_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT,
+                url TEXT UNIQUE,
+                storage TEXT,
+                size INTEGER,
+                created_at TEXT
+            )
+            """
+        )
         # Upgrade any existing DB with newer columns
         cur = conn.execute("PRAGMA table_info(episodes)")
         columns = [row[1] for row in cur.fetchall()]
@@ -2259,3 +2272,98 @@ def update_url_source_content(
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+# =============================================================================
+# Uploaded Images Library Functions
+# =============================================================================
+
+
+def add_uploaded_image(
+    filename: str,
+    url: str,
+    storage: str,
+    size: int = 0,
+    db_path: str = DB_PATH,
+) -> int:
+    """Save an uploaded image to the library.
+    
+    Args:
+        filename: Original or generated filename
+        url: The URL to access the image (local path or Cloudinary URL)
+        storage: 'local' or 'cloudinary'
+        size: File size in bytes
+        
+    Returns:
+        The id of the inserted record
+    """
+    created_at = datetime.utcnow().isoformat()
+    with sqlite3.connect(db_path) as conn:
+        # Check if URL already exists (avoid duplicates)
+        cur = conn.execute("SELECT id FROM uploaded_images WHERE url = ?", (url,))
+        existing = cur.fetchone()
+        if existing:
+            return existing[0]
+        
+        cur = conn.execute(
+            """
+            INSERT INTO uploaded_images (filename, url, storage, size, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (filename, url, storage, size, created_at),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def list_uploaded_images(db_path: str = DB_PATH) -> List[sqlite3.Row]:
+    """List all uploaded images, ordered by most recent first.
+    
+    Returns:
+        List of uploaded_images rows
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            """
+            SELECT * FROM uploaded_images
+            ORDER BY created_at DESC
+            """
+        )
+        return cur.fetchall()
+
+
+def delete_uploaded_image(image_id: int, db_path: str = DB_PATH) -> bool:
+    """Delete an uploaded image record by ID.
+    
+    Args:
+        image_id: The image ID to delete
+        
+    Returns:
+        True if a row was deleted, False otherwise
+    """
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM uploaded_images WHERE id = ?",
+            (image_id,),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def get_uploaded_image(image_id: int, db_path: str = DB_PATH) -> Optional[sqlite3.Row]:
+    """Get an uploaded image by ID.
+    
+    Args:
+        image_id: The image ID
+        
+    Returns:
+        The uploaded_images row or None if not found
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            "SELECT * FROM uploaded_images WHERE id = ?",
+            (image_id,),
+        )
+        return cur.fetchone()

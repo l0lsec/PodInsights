@@ -111,6 +111,10 @@ from database import (
     # Standalone post scheduling
     get_pending_schedules_for_standalone_posts,
     get_posted_info_for_standalone_posts,
+    # Uploaded images library
+    add_uploaded_image,
+    list_uploaded_images,
+    delete_uploaded_image,
 )
 from podinsights import (
     transcribe_audio,
@@ -3115,6 +3119,15 @@ def compose_upload_image():
             )
             image_url = result['secure_url']
             filename = result['public_id'].split('/')[-1]
+            file_size = result.get('bytes', len(cleaned_bytes))
+            
+            # Save to database for image library
+            add_uploaded_image(
+                filename=filename,
+                url=image_url,
+                storage='cloudinary',
+                size=file_size
+            )
             
             return jsonify({
                 "success": True,
@@ -3135,6 +3148,14 @@ def compose_upload_image():
     
     image_url = f"{request.host_url}static/uploads/{unique_filename}"
     
+    # Save to database for image library
+    add_uploaded_image(
+        filename=unique_filename,
+        url=f"/static/uploads/{unique_filename}",
+        storage='local',
+        size=len(cleaned_bytes)
+    )
+    
     return jsonify({
         "success": True,
         "image_url": image_url,
@@ -3146,24 +3167,55 @@ def compose_upload_image():
 
 @app.route('/compose/list-images', methods=['GET'])
 def compose_list_images():
-    """List all uploaded images in the uploads folder."""
-    upload_dir = app.config['UPLOAD_FOLDER']
-    images = []
+    """List all uploaded images from database and local folder."""
+    from datetime import datetime as dt
     
+    images = []
+    seen_urls = set()
+    
+    # First, get images from the database (includes Cloudinary images)
+    db_images = list_uploaded_images()
+    for img in db_images:
+        # Convert ISO datetime string to timestamp for consistent sorting
+        created_at = img['created_at']
+        try:
+            if created_at:
+                timestamp = dt.fromisoformat(created_at).timestamp()
+            else:
+                timestamp = 0
+        except (ValueError, TypeError):
+            timestamp = 0
+        
+        images.append({
+            'id': img['id'],
+            'filename': img['filename'],
+            'url': img['url'],
+            'size': img['size'] or 0,
+            'storage': img['storage'],
+            'created_at': created_at,
+            'modified': timestamp,
+        })
+        seen_urls.add(img['url'])
+    
+    # Also scan local uploads folder for any images not in database (backward compatibility)
+    upload_dir = app.config['UPLOAD_FOLDER']
     if os.path.exists(upload_dir):
         for filename in os.listdir(upload_dir):
             if allowed_file(filename):
-                filepath = os.path.join(upload_dir, filename)
-                stat = os.stat(filepath)
-                images.append({
-                    'filename': filename,
-                    'url': f"/static/uploads/{filename}",
-                    'size': stat.st_size,
-                    'modified': stat.st_mtime
-                })
+                local_url = f"/static/uploads/{filename}"
+                if local_url not in seen_urls:
+                    filepath = os.path.join(upload_dir, filename)
+                    stat = os.stat(filepath)
+                    images.append({
+                        'filename': filename,
+                        'url': local_url,
+                        'size': stat.st_size,
+                        'storage': 'local',
+                        'modified': stat.st_mtime
+                    })
     
-    # Sort by most recently modified first
-    images.sort(key=lambda x: x['modified'], reverse=True)
+    # Sort by most recently modified/created first (all values are now floats)
+    images.sort(key=lambda x: x.get('modified', 0), reverse=True)
     
     return jsonify({'success': True, 'images': images})
 
