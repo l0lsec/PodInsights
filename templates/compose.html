@@ -3176,7 +3176,7 @@ function applyPostFilters() {
         // Update platform count badge
         const countBadge = card.querySelector('.social-copy-header .badge');
         if (countBadge) {
-            if (usedFilter || queuedFilter || platformFilter) {
+            if (usedFilter || queuedFilter || platformFilter || imageFilter) {
                 countBadge.textContent = `${visibleInCard} of ${totalInCard} posts`;
             } else {
                 countBadge.textContent = `${totalInCard} post${totalInCard !== 1 ? 's' : ''}`;
@@ -3187,7 +3187,7 @@ function applyPostFilters() {
     // Update results count
     const resultsSpan = document.getElementById('filter-results-count');
     if (resultsSpan) {
-        if (usedFilter || queuedFilter || platformFilter) {
+        if (usedFilter || queuedFilter || platformFilter || imageFilter) {
             resultsSpan.textContent = `Showing ${visiblePosts} of ${totalPosts}`;
         } else {
             resultsSpan.textContent = '';
