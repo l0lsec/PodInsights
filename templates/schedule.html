@@ -276,6 +276,12 @@ tr.not-draggable .drag-handle {
                 <span class="badge" style="background-color: #0077B5;">💼 {{ linkedin_count }}</span>
                 <span class="badge bg-dark">🧵 {{ threads_count }}</span>
                 <span class="badge bg-secondary">{{ scheduled_posts|length }} total</span>
+                <button class="btn btn-sm btn-outline-primary d-none" id="move-top-btn" onclick="moveSelectedToTop()" title="Move selected to top of queue">
+                    ⬆️ Move to Top
+                </button>
+                <button class="btn btn-sm btn-outline-primary d-none" id="move-bottom-btn" onclick="moveSelectedToBottom()" title="Move selected to bottom of queue">
+                    ⬇️ Move to Bottom
+                </button>
                 <button class="btn btn-sm btn-outline-danger d-none" id="delete-selected-btn" onclick="deleteSelected()">
                     🗑️ Delete Selected (<span id="selected-count">0</span>)
                 </button>
@@ -1031,14 +1037,31 @@ function updateSelectedCount() {
     const count = checkboxes.length;
     const countSpan = document.getElementById('selected-count');
     const deleteBtn = document.getElementById('delete-selected-btn');
+    const moveTopBtn = document.getElementById('move-top-btn');
+    const moveBottomBtn = document.getElementById('move-bottom-btn');
     const selectAll = document.getElementById('select-all');
     
     countSpan.textContent = count;
+    
+    // Check if any selected posts are pending (only pending posts can be moved)
+    const pendingSelected = Array.from(checkboxes).filter(cb => {
+        const row = cb.closest('tr');
+        return row && !row.classList.contains('not-draggable');
+    }).length;
     
     if (count > 0) {
         deleteBtn.classList.remove('d-none');
     } else {
         deleteBtn.classList.add('d-none');
+    }
+    
+    // Show move buttons only if there are pending posts selected
+    if (pendingSelected > 0) {
+        moveTopBtn.classList.remove('d-none');
+        moveBottomBtn.classList.remove('d-none');
+    } else {
+        moveTopBtn.classList.add('d-none');
+        moveBottomBtn.classList.add('d-none');
     }
     
     // Update select-all checkbox state
@@ -1076,6 +1099,60 @@ function deleteSelected() {
     })
     .catch(error => {
         alert('Error: ' + error.message);
+    });
+}
+
+function moveSelectedToTop() {
+    moveSelectedPosts('top');
+}
+
+function moveSelectedToBottom() {
+    moveSelectedPosts('bottom');
+}
+
+function moveSelectedPosts(position) {
+    // Get only pending posts that are selected
+    const checkboxes = document.querySelectorAll('.post-checkbox:checked');
+    const postIds = Array.from(checkboxes)
+        .filter(cb => {
+            const row = cb.closest('tr');
+            return row && !row.classList.contains('not-draggable');
+        })
+        .map(cb => parseInt(cb.dataset.postId));
+    
+    if (postIds.length === 0) {
+        alert('No pending posts selected');
+        return;
+    }
+    
+    const positionText = position === 'top' ? 'top' : 'bottom';
+    if (!confirm(`Move ${postIds.length} post${postIds.length !== 1 ? 's' : ''} to the ${positionText} of the queue?`)) return;
+    
+    // Show loading state
+    const btn = position === 'top' ? document.getElementById('move-top-btn') : document.getElementById('move-bottom-btn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Moving...';
+    btn.disabled = true;
+    
+    fetch('/schedule/move-position', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_ids: postIds, position: position })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to move posts');
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+        btn.innerHTML = originalText;
+        btn.disabled = false;
     });
 }
 

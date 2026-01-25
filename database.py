@@ -845,6 +845,64 @@ def update_social_post(post_id: int, content: str, db_path: str = DB_PATH) -> No
         conn.commit()
 
 
+def bulk_replace_post_content(
+    find_text: str,
+    replace_text: str,
+    post_type: str,
+    case_sensitive: bool = False,
+    post_ids: Optional[List[int]] = None,
+    db_path: str = DB_PATH,
+) -> int:
+    """Replace text in posts of a given type, optionally filtered by post IDs.
+    
+    Args:
+        find_text: The text to search for
+        replace_text: The text to replace with
+        post_type: 'social' for social_posts or 'standalone' for standalone_posts
+        case_sensitive: Whether to do case-sensitive matching
+        post_ids: Optional list of post IDs to limit replacement to
+        
+    Returns:
+        Number of posts that were modified
+    """
+    import re
+    
+    table_name = "social_posts" if post_type == "social" else "standalone_posts"
+    
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        
+        # Get posts with their content, optionally filtered by post_ids
+        if post_ids:
+            placeholders = ",".join("?" for _ in post_ids)
+            cur = conn.execute(
+                f"SELECT id, content FROM {table_name} WHERE id IN ({placeholders})",
+                post_ids
+            )
+        else:
+            cur = conn.execute(f"SELECT id, content FROM {table_name}")
+        posts = cur.fetchall()
+        
+        affected_count = 0
+        flags = 0 if case_sensitive else re.IGNORECASE
+        pattern = re.compile(re.escape(find_text), flags)
+        
+        for post in posts:
+            content = post['content'] or ''
+            if pattern.search(content):
+                new_content = pattern.sub(replace_text, content)
+                if new_content != content:
+                    conn.execute(
+                        f"UPDATE {table_name} SET content = ? WHERE id = ?",
+                        (new_content, post['id']),
+                    )
+                    affected_count += 1
+        
+        conn.commit()
+    
+    return affected_count
+
+
 # --- LinkedIn Token Functions ---
 
 
@@ -1461,6 +1519,72 @@ def reorder_scheduled_posts(post_ids: List[int], db_path: str = DB_PATH) -> bool
                 conn.execute(
                     "UPDATE scheduled_posts SET scheduled_for = ? WHERE id = ? AND status = 'pending'",
                     (times_in_order[i], post_id),
+                )
+        
+        conn.commit()
+    
+    return True
+
+
+def move_posts_to_position(
+    post_ids: List[int],
+    position: str,
+    db_path: str = DB_PATH,
+) -> bool:
+    """Move selected pending posts to the top or bottom of the queue.
+    
+    Args:
+        post_ids: List of scheduled post IDs to move
+        position: 'top' to move to earliest times, 'bottom' to move to latest times
+        db_path: Database path
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not post_ids:
+        return True  # Nothing to move
+    
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        
+        # Get ALL pending posts ordered by scheduled_for
+        cur = conn.execute(
+            """
+            SELECT id, scheduled_for FROM scheduled_posts
+            WHERE status = 'pending'
+            ORDER BY scheduled_for ASC
+            """
+        )
+        all_posts = cur.fetchall()
+        
+        if len(all_posts) < 2:
+            return True  # Not enough posts to reorder
+        
+        # Separate selected posts from non-selected posts
+        selected_ids_set = set(post_ids)
+        selected_posts = [p for p in all_posts if p['id'] in selected_ids_set]
+        other_posts = [p for p in all_posts if p['id'] not in selected_ids_set]
+        
+        if not selected_posts:
+            return True  # No selected posts found
+        
+        # Get all times in order
+        all_times = sorted([p['scheduled_for'] for p in all_posts])
+        
+        # Create new ordering based on position
+        if position == 'top':
+            # Selected posts first, then others
+            new_order = selected_posts + other_posts
+        else:  # bottom
+            # Others first, then selected posts
+            new_order = other_posts + selected_posts
+        
+        # Assign times to new order
+        for i, post in enumerate(new_order):
+            if i < len(all_times):
+                conn.execute(
+                    "UPDATE scheduled_posts SET scheduled_for = ? WHERE id = ? AND status = 'pending'",
+                    (all_times[i], post['id']),
                 )
         
         conn.commit()

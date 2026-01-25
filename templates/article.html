@@ -115,6 +115,9 @@
                     <button type="button" class="btn btn-sm btn-danger d-none" id="delete-selected-btn" onclick="deleteSelectedPosts()">
                         🗑️ Delete Selected (<span id="selected-count">0</span>)
                     </button>
+                    <button type="button" class="btn btn-sm btn-outline-info" onclick="openSearchReplaceModal()">
+                        🔍 Find & Replace
+                    </button>
                     <button type="button" class="btn btn-sm btn-primary" onclick="showQueueAllModal()">
                         🚀 Queue All Unscheduled
                     </button>
@@ -1612,6 +1615,286 @@ function clearPostFilters() {
     applyPostFilters();
 }
 
+// ============================================================================
+// Search and Replace Functions
+// ============================================================================
+
+let searchReplacePostData = [];
+let searchDebounceTimer = null;
+
+function openSearchReplaceModal() {
+    // Gather post data from visible (non-filtered) posts only
+    searchReplacePostData = [];
+    let totalPosts = 0;
+    
+    document.querySelectorAll('.post-item[data-post-id]').forEach(post => {
+        totalPosts++;
+        
+        // Skip posts that are hidden by filters
+        if (post.style.display === 'none') return;
+        
+        // Also skip if parent card is hidden (platform filter)
+        const card = post.closest('.social-copy-card');
+        if (card && card.style.display === 'none') return;
+        
+        const postId = post.dataset.postId;
+        const contentEl = post.querySelector('.social-copy-text');
+        const content = contentEl ? contentEl.textContent : '';
+        const platform = card ? card.dataset.platform : 'unknown';
+        const postIndex = post.dataset.postIndex || '?';
+        
+        if (content.trim()) {
+            searchReplacePostData.push({
+                id: postId,
+                content: content,
+                platform: platform,
+                index: postIndex
+            });
+        }
+    });
+    
+    // Check if filters are active
+    const filtersActive = searchReplacePostData.length < totalPosts;
+    const filterNotice = document.getElementById('search-filter-notice');
+    if (filterNotice) {
+        if (filtersActive) {
+            filterNotice.textContent = `Searching ${searchReplacePostData.length} of ${totalPosts} posts (filters active)`;
+            filterNotice.classList.remove('d-none');
+        } else {
+            filterNotice.classList.add('d-none');
+        }
+    }
+    
+    // Reset the form
+    document.getElementById('search-find-input').value = '';
+    document.getElementById('search-replace-input').value = '';
+    document.getElementById('search-case-sensitive').checked = false;
+    document.getElementById('search-match-count').textContent = '0 matches in 0 posts';
+    document.getElementById('search-empty-state').classList.remove('d-none');
+    document.getElementById('search-results-list').classList.add('d-none');
+    document.getElementById('search-results-list').innerHTML = '';
+    document.getElementById('replace-all-btn').disabled = true;
+    document.getElementById('search-select-controls').classList.add('d-none');
+    document.getElementById('search-select-all').checked = true;
+    
+    new bootstrap.Modal(document.getElementById('searchReplaceModal')).show();
+}
+
+function performLiveSearch() {
+    // Debounce the search
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+        doSearch();
+    }, 300);
+}
+
+function doSearch() {
+    const findText = document.getElementById('search-find-input').value;
+    const replaceText = document.getElementById('search-replace-input').value;
+    const caseSensitive = document.getElementById('search-case-sensitive').checked;
+    
+    const emptyState = document.getElementById('search-empty-state');
+    const resultsList = document.getElementById('search-results-list');
+    const matchCountBadge = document.getElementById('search-match-count');
+    const replaceBtn = document.getElementById('replace-all-btn');
+    
+    if (!findText.trim()) {
+        emptyState.classList.remove('d-none');
+        resultsList.classList.add('d-none');
+        resultsList.innerHTML = '';
+        matchCountBadge.textContent = '0 matches in 0 posts';
+        replaceBtn.disabled = true;
+        document.getElementById('search-select-controls').classList.add('d-none');
+        return;
+    }
+    
+    // Find matching posts
+    const matchingPosts = [];
+    let totalMatches = 0;
+    
+    searchReplacePostData.forEach(post => {
+        const content = post.content;
+        const flags = caseSensitive ? 'g' : 'gi';
+        const regex = new RegExp(escapeRegex(findText), flags);
+        const matches = content.match(regex);
+        
+        if (matches && matches.length > 0) {
+            totalMatches += matches.length;
+            matchingPosts.push({
+                ...post,
+                matchCount: matches.length,
+                highlightedContent: highlightMatches(content, findText, caseSensitive),
+                previewContent: replaceText ? showReplacementPreview(content, findText, replaceText, caseSensitive) : null
+            });
+        }
+    });
+    
+    // Update UI
+    matchCountBadge.textContent = `${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in ${matchingPosts.length} post${matchingPosts.length !== 1 ? 's' : ''}`;
+    replaceBtn.disabled = matchingPosts.length === 0;
+    
+    if (matchingPosts.length === 0) {
+        emptyState.innerHTML = `
+            <div style="font-size: 2rem;">😕</div>
+            <p class="mb-0">No matches found for "<strong>${escapeHtml(findText)}</strong>"</p>
+        `;
+        emptyState.classList.remove('d-none');
+        resultsList.classList.add('d-none');
+        document.getElementById('search-select-controls').classList.add('d-none');
+        return;
+    }
+    
+    // Render matching posts
+    emptyState.classList.add('d-none');
+    resultsList.classList.remove('d-none');
+    document.getElementById('search-select-controls').classList.remove('d-none');
+    
+    let html = '';
+    matchingPosts.forEach(post => {
+        const platformIcon = post.platform === 'linkedin' ? '💼' : 
+                            post.platform === 'threads' ? '🧵' : '📱';
+        const platformColor = post.platform === 'linkedin' ? '#0077B5' : 
+                             post.platform === 'threads' ? '#000000' : '#6c757d';
+        
+        html += `
+            <div class="card mb-2 search-result-card" data-post-id="${post.id}">
+                <div class="card-header py-2 d-flex justify-content-between align-items-center" style="background-color: ${platformColor}15;">
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="checkbox" class="form-check-input search-post-checkbox" 
+                               data-post-id="${post.id}" checked onchange="updateSearchSelectedCount()">
+                        <span class="badge" style="background-color: ${platformColor};">${platformIcon} ${post.platform.charAt(0).toUpperCase() + post.platform.slice(1)}</span>
+                        <span class="badge bg-secondary">Post ${post.index}</span>
+                        <span class="badge bg-warning text-dark">${post.matchCount} match${post.matchCount !== 1 ? 'es' : ''}</span>
+                    </div>
+                </div>
+                <div class="card-body py-2">
+                    <div class="search-content-preview" style="font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word;">
+                        ${post.highlightedContent}
+                    </div>
+                    ${post.previewContent ? `
+                    <hr class="my-2">
+                    <div class="text-muted small mb-1">After replacement:</div>
+                    <div class="replacement-preview" style="font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; background-color: #f8f9fa; padding: 8px; border-radius: 4px;">
+                        ${post.previewContent}
+                    </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    });
+    
+    resultsList.innerHTML = html;
+    
+    // Update selected count and reset select-all checkbox
+    document.getElementById('search-select-all').checked = true;
+    updateSearchSelectedCount();
+}
+
+function escapeRegex(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function highlightMatches(text, searchTerm, caseSensitive) {
+    const escaped = escapeHtml(text);
+    const flags = caseSensitive ? 'g' : 'gi';
+    const regex = new RegExp(`(${escapeRegex(escapeHtml(searchTerm))})`, flags);
+    return escaped.replace(regex, '<mark style="background-color: #fff3cd; padding: 0 2px;">$1</mark>');
+}
+
+function showReplacementPreview(text, findText, replaceText, caseSensitive) {
+    const escaped = escapeHtml(text);
+    const flags = caseSensitive ? 'g' : 'gi';
+    const regex = new RegExp(`(${escapeRegex(escapeHtml(findText))})`, flags);
+    return escaped.replace(regex, `<span style="background-color: #d4edda; padding: 0 2px;">${escapeHtml(replaceText)}</span>`);
+}
+
+function toggleSearchSelectAll(checkbox) {
+    const postCheckboxes = document.querySelectorAll('.search-post-checkbox');
+    postCheckboxes.forEach(cb => cb.checked = checkbox.checked);
+    updateSearchSelectedCount();
+}
+
+function updateSearchSelectedCount() {
+    const allCheckboxes = document.querySelectorAll('.search-post-checkbox');
+    const checkedCheckboxes = document.querySelectorAll('.search-post-checkbox:checked');
+    const total = allCheckboxes.length;
+    const selected = checkedCheckboxes.length;
+    
+    // Update count display
+    document.getElementById('search-selected-count').textContent = `${selected} of ${total} selected`;
+    
+    // Update select-all checkbox state
+    const selectAllCheckbox = document.getElementById('search-select-all');
+    selectAllCheckbox.checked = selected === total;
+    selectAllCheckbox.indeterminate = selected > 0 && selected < total;
+    
+    // Enable/disable replace button based on selection
+    document.getElementById('replace-all-btn').disabled = selected === 0;
+}
+
+function executeReplaceAll() {
+    const findText = document.getElementById('search-find-input').value;
+    const replaceText = document.getElementById('search-replace-input').value;
+    const caseSensitive = document.getElementById('search-case-sensitive').checked;
+    
+    // Get selected post IDs
+    const selectedPostIds = Array.from(document.querySelectorAll('.search-post-checkbox:checked'))
+        .map(cb => cb.dataset.postId);
+    
+    if (!findText.trim()) {
+        alert('Please enter text to find');
+        return;
+    }
+    
+    if (selectedPostIds.length === 0) {
+        alert('No posts selected');
+        return;
+    }
+    
+    const btn = document.getElementById('replace-all-btn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Replacing...';
+    btn.disabled = true;
+    
+    fetch('/posts/bulk-replace', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            find: findText,
+            replace: replaceText,
+            post_type: 'social',
+            case_sensitive: caseSensitive,
+            post_ids: selectedPostIds
+        }),
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            bootstrap.Modal.getInstance(document.getElementById('searchReplaceModal')).hide();
+            showToast(`Replaced in ${data.affected_count} post${data.affected_count !== 1 ? 's' : ''}`, 'success');
+            // Reload to show updated content
+            setTimeout(() => location.reload(), 500);
+        } else {
+            alert('Error: ' + (data.error || 'Failed to replace'));
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    });
+}
+
 </script>
 
 <!-- Schedule Modal -->
@@ -1679,6 +1962,63 @@ function clearPostFilters() {
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Search and Replace Modal -->
+<div class="modal fade" id="searchReplaceModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                <h5 class="modal-title">🔍 Find & Replace in Posts</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning py-2 d-none" id="search-filter-notice" role="alert">
+                    <small>Searching filtered posts</small>
+                </div>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Find</label>
+                        <input type="text" class="form-control" id="search-find-input" placeholder="Text to find..." oninput="performLiveSearch()">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Replace with</label>
+                        <input type="text" class="form-control" id="search-replace-input" placeholder="Replacement text..." oninput="performLiveSearch()">
+                    </div>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="search-case-sensitive" onchange="performLiveSearch()">
+                        <label class="form-check-label" for="search-case-sensitive">Case sensitive</label>
+                    </div>
+                    <div>
+                        <span class="badge bg-info" id="search-match-count">0 matches in 0 posts</span>
+                    </div>
+                </div>
+                <hr>
+                <div class="d-flex justify-content-between align-items-center mb-2 d-none" id="search-select-controls">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="search-select-all" checked onchange="toggleSearchSelectAll(this)">
+                        <label class="form-check-label" for="search-select-all">Select All</label>
+                    </div>
+                    <span class="text-muted small" id="search-selected-count">0 of 0 selected</span>
+                </div>
+                <div id="search-results-container" style="max-height: 400px; overflow-y: auto;">
+                    <div class="text-center text-muted py-4" id="search-empty-state">
+                        <div style="font-size: 2rem;">🔍</div>
+                        <p class="mb-0">Enter text to search in posts</p>
+                    </div>
+                    <div id="search-results-list" class="d-none"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="executeReplaceAll()" id="replace-all-btn" disabled>
+                    Replace All
+                </button>
             </div>
         </div>
     </div>

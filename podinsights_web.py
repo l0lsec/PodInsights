@@ -1682,6 +1682,52 @@ def edit_social_post_image(post_id: int):
     return jsonify({"success": True, "image_url": image_url})
 
 
+@app.route('/posts/bulk-replace', methods=['POST'])
+def bulk_replace_posts():
+    """Replace text in all posts of a given type, optionally filtered by post IDs."""
+    from database import bulk_replace_post_content
+    
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    find_text = data.get('find', '')
+    replace_text = data.get('replace', '')
+    post_type = data.get('post_type', 'social')  # 'social' or 'standalone'
+    case_sensitive = data.get('case_sensitive', False)
+    post_ids = data.get('post_ids')  # Optional list of post IDs to filter
+    
+    if not find_text:
+        return jsonify({"error": "Find text is required"}), 400
+    
+    if post_type not in ('social', 'standalone'):
+        return jsonify({"error": "post_type must be 'social' or 'standalone'"}), 400
+    
+    # Convert post_ids to integers if provided
+    if post_ids:
+        try:
+            post_ids = [int(pid) for pid in post_ids]
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid post IDs"}), 400
+    
+    try:
+        affected_count = bulk_replace_post_content(
+            find_text=find_text,
+            replace_text=replace_text,
+            post_type=post_type,
+            case_sensitive=case_sensitive,
+            post_ids=post_ids,
+        )
+        return jsonify({
+            "success": True,
+            "affected_count": affected_count,
+            "message": f"Replaced in {affected_count} post(s)"
+        })
+    except Exception as exc:
+        app.logger.exception("Failed to bulk replace posts")
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.route('/article/<int:article_id>/refine', methods=['POST'])
 def refine_article_with_ai(article_id: int):
     """Refine an article using AI based on user feedback."""
@@ -2788,6 +2834,40 @@ def schedule_reorder():
         })
     else:
         return jsonify({"error": "Failed to reorder posts"}), 500
+
+
+@app.route('/schedule/move-position', methods=['POST'])
+def schedule_move_position():
+    """Move selected pending posts to the top or bottom of the queue."""
+    from database import move_posts_to_position
+    
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    post_ids = data.get('post_ids', [])
+    position = data.get('position', '')
+    
+    if not post_ids:
+        return jsonify({"error": "No post IDs provided"}), 400
+    
+    if position not in ('top', 'bottom'):
+        return jsonify({"error": "Position must be 'top' or 'bottom'"}), 400
+    
+    try:
+        post_ids = [int(pid) for pid in post_ids]
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid post IDs"}), 400
+    
+    success = move_posts_to_position(post_ids, position)
+    
+    if success:
+        return jsonify({
+            "success": True,
+            "message": f"Moved {len(post_ids)} post(s) to {position}"
+        })
+    else:
+        return jsonify({"error": "Failed to move posts"}), 500
 
 
 @app.route('/schedule/<int:scheduled_id>/edit', methods=['POST'])
