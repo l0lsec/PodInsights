@@ -143,6 +143,14 @@ from threads_client import (
     calculate_token_expiry as threads_calculate_token_expiry,
     is_token_expired as threads_is_token_expired,
 )
+from stock_images import (
+    search_stock_images,
+    get_image_for_post,
+    get_images_for_post,
+    extract_keywords_from_text,
+    is_configured as stock_images_configured,
+    get_configured_services as get_stock_image_services,
+)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
@@ -3157,6 +3165,154 @@ def compose_update_post_image(post_id: int):
     return jsonify({"success": True, "image_url": image_url})
 
 
+@app.route('/compose/post/<int:post_id>/stock-image', methods=['GET'])
+def compose_get_stock_images(post_id: int):
+    """Search for stock images based on post content.
+    ---
+    tags:
+      - Compose
+    parameters:
+      - name: post_id
+        in: path
+        type: integer
+        required: true
+      - name: count
+        in: query
+        type: integer
+        default: 5
+        description: Number of images to return
+    responses:
+      200:
+        description: List of stock images
+      404:
+        description: Post not found
+      503:
+        description: No stock image API configured
+    """
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    if not stock_images_configured():
+        return jsonify({
+            "error": "No stock image API configured. Add UNSPLASH_ACCESS_KEY, PEXELS_API_KEY, or PIXABAY_API_KEY to your .env file.",
+            "configured": False,
+        }), 503
+    
+    count = request.args.get('count', 5, type=int)
+    count = min(max(count, 1), 20)  # Clamp between 1 and 20
+    
+    content = post['content'] if post['content'] else ''
+    keywords = extract_keywords_from_text(content)
+    images = get_images_for_post(content, count=count)
+    
+    return jsonify({
+        "success": True,
+        "keywords": keywords,
+        "images": images,
+        "configured_services": get_stock_image_services(),
+    })
+
+
+@app.route('/compose/post/<int:post_id>/stock-image', methods=['POST'])
+def compose_apply_stock_image(post_id: int):
+    """Apply a stock image to a post.
+    ---
+    tags:
+      - Compose
+    parameters:
+      - name: post_id
+        in: path
+        type: integer
+        required: true
+      - name: body
+        in: body
+        schema:
+          type: object
+          properties:
+            image_url:
+              type: string
+    responses:
+      200:
+        description: Image applied successfully
+      404:
+        description: Post not found
+    """
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    data = request.get_json() or {}
+    image_url = data.get('image_url', '').strip()
+    
+    if not image_url:
+        return jsonify({"error": "No image URL provided"}), 400
+    
+    update_standalone_post_image(post_id, image_url)
+    return jsonify({"success": True, "image_url": image_url})
+
+
+@app.route('/compose/stock-images/search', methods=['GET'])
+def compose_search_stock_images():
+    """Search for stock images by custom query.
+    ---
+    tags:
+      - Compose
+    parameters:
+      - name: q
+        in: query
+        type: string
+        required: true
+        description: Search query
+      - name: count
+        in: query
+        type: integer
+        default: 5
+    responses:
+      200:
+        description: List of stock images
+      503:
+        description: No stock image API configured
+    """
+    if not stock_images_configured():
+        return jsonify({
+            "error": "No stock image API configured",
+            "configured": False,
+        }), 503
+    
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({"error": "Query parameter 'q' is required"}), 400
+    
+    count = request.args.get('count', 5, type=int)
+    count = min(max(count, 1), 20)
+    
+    images = search_stock_images(query, per_page=count)
+    
+    return jsonify({
+        "success": True,
+        "query": query,
+        "images": images,
+        "configured_services": get_stock_image_services(),
+    })
+
+
+@app.route('/compose/stock-images/status', methods=['GET'])
+def compose_stock_images_status():
+    """Check if stock image APIs are configured.
+    ---
+    tags:
+      - Compose
+    responses:
+      200:
+        description: Configuration status
+    """
+    return jsonify({
+        "configured": stock_images_configured(),
+        "services": get_stock_image_services(),
+    })
+
+
 @app.route('/compose/upload-image', methods=['POST'])
 def compose_upload_image():
     """Upload an image file and return its URL."""
@@ -3316,6 +3472,57 @@ def compose_delete_bulk():
     return jsonify({
         "success": True,
         "deleted_count": deleted,
+    })
+
+
+@app.route('/compose/posts/bulk-image', methods=['POST'])
+def compose_bulk_update_images():
+    """Bulk update images for multiple standalone posts.
+    ---
+    tags:
+      - Compose
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            post_ids:
+              type: array
+              items:
+                type: integer
+            image_url:
+              type: string
+              description: Image URL to set, or null/empty to remove
+    responses:
+      200:
+        description: Images updated successfully
+      400:
+        description: No posts selected
+    """
+    data = request.get_json()
+    post_ids = data.get('post_ids', [])
+    image_url = data.get('image_url')  # None or empty string to remove
+    
+    if not post_ids:
+        return jsonify({"error": "No posts selected"}), 400
+    
+    # Convert to integers
+    post_ids = [int(pid) for pid in post_ids]
+    
+    # Update each post's image
+    updated = 0
+    for post_id in post_ids:
+        post = get_standalone_post(post_id)
+        if post:
+            update_standalone_post_image(post_id, image_url if image_url else None)
+            updated += 1
+    
+    return jsonify({
+        "success": True,
+        "updated_count": updated,
+        "image_url": image_url
     })
 
 
@@ -3551,6 +3758,31 @@ def compose_add_to_queue(post_id: int):
         "scheduled_for": schedule_time,
         "scheduled_for_display": display,
         "message": f"Scheduled for {display}",
+    })
+
+
+@app.route('/compose/post/<int:post_id>/unqueue', methods=['POST'])
+def compose_remove_from_queue(post_id: int):
+    """Remove a standalone post from the schedule queue."""
+    post = get_standalone_post(post_id)
+    if not post:
+        return jsonify({"error": "Post not found"}), 404
+    
+    # Find and delete any scheduled posts for this standalone post
+    scheduled_posts = list_scheduled_posts(status='pending')
+    removed = 0
+    for sp in scheduled_posts:
+        if sp.get('standalone_post_id') == post_id:
+            delete_scheduled_post(sp['id'])
+            removed += 1
+    
+    if removed == 0:
+        return jsonify({"error": "Post not found in queue"}), 404
+    
+    return jsonify({
+        "success": True,
+        "removed_count": removed,
+        "message": f"Removed from queue",
     })
 
 

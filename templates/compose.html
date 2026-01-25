@@ -557,8 +557,20 @@
                 <button type="button" class="btn btn-sm btn-success d-none" id="queue-selected-btn" onclick="queueSelectedPosts()">
                     ➕ Add to Queue (<span id="queue-selected-count">0</span>)
                 </button>
+                <button type="button" class="btn btn-sm btn-outline-danger d-none" id="unqueue-selected-btn" onclick="unqueueSelectedPosts()">
+                    ➖ Remove from Queue (<span id="unqueue-selected-count">0</span>)
+                </button>
                 <button type="button" class="btn btn-sm btn-danger d-none" id="delete-selected-btn" onclick="deleteSelectedPosts()">
                     🗑️ Delete Selected (<span id="selected-count">0</span>)
+                </button>
+                <button type="button" class="btn btn-sm btn-warning d-none" id="remove-image-selected-btn" onclick="removeImageFromSelected()">
+                    🖼️✕ Remove Images (<span id="remove-image-count">0</span>)
+                </button>
+                <button type="button" class="btn btn-sm btn-info d-none" id="add-image-selected-btn" onclick="showBulkAddImageModal()">
+                    🖼️+ Add Image (<span id="add-image-count">0</span>)
+                </button>
+                <button type="button" class="btn btn-sm btn-secondary d-none" id="find-stock-images-btn" onclick="findStockImagesForSelected()">
+                    🔍 Find Stock Images (<span id="find-stock-count">0</span>)
                 </button>
                 <button type="button" class="btn btn-sm btn-primary" onclick="showQueueAllModal()">
                     🚀 Queue All Unscheduled
@@ -586,6 +598,11 @@
                 <option value="">All Platforms</option>
                 <option value="linkedin">💼 LinkedIn</option>
                 <option value="threads">🧵 Threads</option>
+            </select>
+            <select class="form-select form-select-sm" style="width: auto;" id="filter-image" onchange="applyPostFilters()">
+                <option value="">All Images</option>
+                <option value="has-image">🖼️ Has Image</option>
+                <option value="no-image">📝 No Image</option>
             </select>
             <button class="btn btn-sm btn-outline-secondary" onclick="clearPostFilters()" title="Clear Filters">✕</button>
             <span class="text-muted small ms-2" id="filter-results-count"></span>
@@ -739,6 +756,13 @@
                                                 📚 Library
                                             </button>
                                         </li>
+                                        <li class="nav-item">
+                                            <button class="nav-link py-1 px-2" type="button" 
+                                                onclick="switchPostImageTab({{ post.id }}, 'stock')" 
+                                                id="post-stock-tab-{{ post.id }}">
+                                                🔍 Stock
+                                            </button>
+                                        </li>
                                     </ul>
                                     
                                     <!-- Upload File Pane -->
@@ -782,6 +806,24 @@
                                     <div id="post-library-pane-{{ post.id }}" class="d-none">
                                         <div id="post-library-grid-{{ post.id }}" class="d-flex flex-wrap gap-1" style="max-height: 120px; overflow-y: auto;">
                                             <div class="text-muted small">Loading...</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Stock Images Pane -->
+                                    <div id="post-stock-pane-{{ post.id }}" class="d-none">
+                                        <div class="input-group input-group-sm mb-2">
+                                            <input type="text" class="form-control" id="post-stock-search-{{ post.id }}" 
+                                                   placeholder="Search keywords (auto-filled from post)"
+                                                   onkeydown="if(event.key === 'Enter') { event.preventDefault(); searchStockImages({{ post.id }}); }">
+                                            <button class="btn btn-primary" type="button" onclick="searchStockImages({{ post.id }})">
+                                                🔍
+                                            </button>
+                                            <button class="btn btn-outline-secondary" type="button" onclick="cancelImageEdit({{ post.id }})">
+                                                ✕
+                                            </button>
+                                        </div>
+                                        <div id="post-stock-grid-{{ post.id }}" class="d-flex flex-wrap gap-1" style="max-height: 120px; overflow-y: auto;">
+                                            <div class="text-muted small">Click 🔍 to search for free stock images</div>
                                         </div>
                                     </div>
                                     
@@ -896,6 +938,80 @@
             <div class="modal-body p-0 text-center">
                 <img id="lightbox-image" src="" alt="Image preview" class="img-fluid" style="max-height: 80vh; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
                 <button type="button" class="btn-close btn-close-white position-absolute top-0 end-0 m-2" data-bs-dismiss="modal" aria-label="Close" style="background-color: rgba(0,0,0,0.5); padding: 10px; border-radius: 50%;"></button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk Add Image Modal -->
+<div class="modal fade" id="bulkAddImageModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header" style="background: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%); color: white;">
+                <h5 class="modal-title">🖼️ Add Image to Selected Posts</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Select an image to add to <strong id="bulk-image-post-count">0</strong> selected posts.
+                </p>
+                
+                <!-- Image Source Tabs -->
+                <ul class="nav nav-pills nav-fill mb-3" id="bulk-add-image-tabs">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#" onclick="switchBulkAddImageTab('upload'); return false;">📤 Upload</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="switchBulkAddImageTab('url'); return false;">🔗 URL</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="switchBulkAddImageTab('library'); return false;">📚 Library</a>
+                    </li>
+                </ul>
+                
+                <!-- Upload Pane -->
+                <div id="bulk-add-upload-pane">
+                    <div class="input-group mb-2">
+                        <input type="file" class="form-control" id="bulk-add-image-file" 
+                               accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                               onchange="handleBulkAddImageFileSelect(this)">
+                    </div>
+                    <div id="bulk-add-upload-preview" class="d-none mb-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <img src="" alt="Preview" class="img-thumbnail" style="max-height: 60px; max-width: 100px;">
+                            <span class="text-muted small" id="bulk-add-filename"></span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- URL Pane -->
+                <div id="bulk-add-url-pane" class="d-none">
+                    <div class="input-group mb-2">
+                        <input type="url" class="form-control" id="bulk-add-image-url" placeholder="https://example.com/image.jpg">
+                        <button class="btn btn-outline-secondary" type="button" onclick="previewBulkAddImageUrl()" title="Preview">
+                            👁️
+                        </button>
+                    </div>
+                    <div id="bulk-add-url-preview" class="d-none mb-2">
+                        <img src="" alt="Preview" class="img-thumbnail" style="max-height: 100px;">
+                    </div>
+                </div>
+                
+                <!-- Library Pane -->
+                <div id="bulk-add-library-pane" class="d-none">
+                    <div id="bulk-add-library-grid" class="d-flex flex-wrap gap-2" style="max-height: 200px; overflow-y: auto;">
+                        <div class="text-muted small">Loading...</div>
+                    </div>
+                </div>
+                
+                <!-- Hidden field for selected image URL -->
+                <input type="hidden" id="bulk-add-final-image-url" value="">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="applyBulkImage()" id="apply-bulk-image-btn">
+                    Apply to Selected Posts
+                </button>
             </div>
         </div>
     </div>
@@ -1463,13 +1579,15 @@ function switchPostImageTab(postId, tab) {
     const uploadTab = document.getElementById(`post-upload-tab-${postId}`);
     const urlTab = document.getElementById(`post-url-tab-${postId}`);
     const libraryTab = document.getElementById(`post-library-tab-${postId}`);
+    const stockTab = document.getElementById(`post-stock-tab-${postId}`);
     const uploadPane = document.getElementById(`post-upload-pane-${postId}`);
     const urlPane = document.getElementById(`post-url-pane-${postId}`);
     const libraryPane = document.getElementById(`post-library-pane-${postId}`);
+    const stockPane = document.getElementById(`post-stock-pane-${postId}`);
     
     // Reset all tabs
-    [uploadTab, urlTab, libraryTab].forEach(t => t && t.classList.remove('active'));
-    [uploadPane, urlPane, libraryPane].forEach(p => p && p.classList.add('d-none'));
+    [uploadTab, urlTab, libraryTab, stockTab].forEach(t => t && t.classList.remove('active'));
+    [uploadPane, urlPane, libraryPane, stockPane].forEach(p => p && p.classList.add('d-none'));
     
     if (tab === 'upload') {
         uploadTab.classList.add('active');
@@ -1482,7 +1600,128 @@ function switchPostImageTab(postId, tab) {
         libraryTab.classList.add('active');
         libraryPane.classList.remove('d-none');
         loadImageLibrary('post', postId);
+    } else if (tab === 'stock') {
+        stockTab.classList.add('active');
+        stockPane.classList.remove('d-none');
+        // Auto-populate search keywords from post content and search
+        autoSearchStockImages(postId);
     }
+}
+
+// Stock image functions
+function autoSearchStockImages(postId) {
+    const grid = document.getElementById(`post-stock-grid-${postId}`);
+    const searchInput = document.getElementById(`post-stock-search-${postId}`);
+    
+    grid.innerHTML = '<div class="text-muted small">🔍 Searching for images...</div>';
+    
+    // Fetch images based on post content
+    fetch(`/compose/post/${postId}/stock-image?count=8`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                if (data.configured === false) {
+                    grid.innerHTML = `<div class="text-muted small">
+                        ⚠️ No stock image API configured.<br>
+                        <small>Add UNSPLASH_ACCESS_KEY to your .env file (free!).</small>
+                    </div>`;
+                } else {
+                    grid.innerHTML = `<div class="text-muted small">❌ ${data.error || 'Error loading images'}</div>`;
+                }
+                return;
+            }
+            
+            // Populate search input with extracted keywords
+            searchInput.value = data.keywords || '';
+            
+            if (data.images && data.images.length > 0) {
+                renderStockImageGrid(postId, data.images);
+            } else {
+                grid.innerHTML = '<div class="text-muted small">No images found. Try different keywords.</div>';
+            }
+        })
+        .catch(err => {
+            grid.innerHTML = '<div class="text-muted small">❌ Error loading images</div>';
+        });
+}
+
+function searchStockImages(postId) {
+    const searchInput = document.getElementById(`post-stock-search-${postId}`);
+    const query = searchInput.value.trim();
+    const grid = document.getElementById(`post-stock-grid-${postId}`);
+    
+    if (!query) {
+        showToast('Please enter search keywords', 'warning');
+        return;
+    }
+    
+    grid.innerHTML = '<div class="text-muted small">🔍 Searching...</div>';
+    
+    fetch(`/compose/stock-images/search?q=${encodeURIComponent(query)}&count=8`)
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                grid.innerHTML = `<div class="text-muted small">❌ ${data.error || 'Error'}</div>`;
+                return;
+            }
+            
+            if (data.images && data.images.length > 0) {
+                renderStockImageGrid(postId, data.images);
+            } else {
+                grid.innerHTML = '<div class="text-muted small">No images found. Try different keywords.</div>';
+            }
+        })
+        .catch(err => {
+            grid.innerHTML = '<div class="text-muted small">❌ Error searching images</div>';
+        });
+}
+
+function renderStockImageGrid(postId, images) {
+    const grid = document.getElementById(`post-stock-grid-${postId}`);
+    
+    grid.innerHTML = images.map(img => `
+        <div class="stock-image-item" style="cursor: pointer; border: 2px solid transparent; border-radius: 4px; padding: 2px; position: relative;"
+             onclick="selectStockImage(${postId}, '${img.url}')" title="${img.description || 'Stock image'}">
+            <img src="${img.thumb || img.small}" 
+                 style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px;">
+            <small class="position-absolute bottom-0 end-0 bg-dark text-white px-1" style="font-size: 8px; border-radius: 0 0 4px 0;">
+                ${img.source}
+            </small>
+        </div>
+    `).join('');
+}
+
+function selectStockImage(postId, imageUrl) {
+    // Save the stock image to the post
+    document.getElementById(`image-url-input-${postId}`).value = imageUrl;
+    document.getElementById(`post-final-image-url-${postId}`).value = imageUrl;
+    
+    fetch(`/compose/post/${postId}/stock-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_url: imageUrl })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const preview = document.getElementById(`image-preview-${postId}`);
+            const editForm = document.getElementById(`image-edit-form-${postId}`);
+            const addBtn = document.getElementById(`add-image-btn-${postId}`);
+            
+            preview.querySelector('img').src = imageUrl;
+            preview.querySelector('span').textContent = imageUrl;
+            preview.classList.remove('d-none');
+            editForm.classList.add('d-none');
+            if (addBtn) addBtn.classList.add('d-none');
+            
+            showToast('Stock image added!', 'success');
+        } else {
+            showToast('Error saving image: ' + (data.error || 'Unknown error'), 'error');
+        }
+    })
+    .catch(err => {
+        showToast('Error saving image', 'error');
+    });
 }
 
 function handlePostImageFileSelect(postId, input) {
@@ -1929,6 +2168,11 @@ function toggleSelectMode() {
     const checkboxes = document.querySelectorAll('.post-select-checkbox');
     const toggleBtn = document.getElementById('toggle-select-mode');
     const deleteBtn = document.getElementById('delete-selected-btn');
+    const queueBtn = document.getElementById('queue-selected-btn');
+    const unqueueBtn = document.getElementById('unqueue-selected-btn');
+    const removeImageBtn = document.getElementById('remove-image-selected-btn');
+    const addImageBtn = document.getElementById('add-image-selected-btn');
+    const findStockBtn = document.getElementById('find-stock-images-btn');
     const selectModeBtns = document.querySelectorAll('.select-mode-btn');
     
     if (selectModeActive) {
@@ -1947,6 +2191,11 @@ function toggleSelectMode() {
         toggleBtn.classList.add('btn-outline-secondary');
         toggleBtn.innerHTML = '☑️ Select';
         deleteBtn.classList.add('d-none');
+        queueBtn.classList.add('d-none');
+        unqueueBtn.classList.add('d-none');
+        removeImageBtn.classList.add('d-none');
+        addImageBtn.classList.add('d-none');
+        findStockBtn.classList.add('d-none');
     }
     updateSelectedCount();
 }
@@ -1990,28 +2239,60 @@ function updateSelectedCount() {
     
     const deleteBtn = document.getElementById('delete-selected-btn');
     const queueBtn = document.getElementById('queue-selected-btn');
+    const unqueueBtn = document.getElementById('unqueue-selected-btn');
+    const removeImageBtn = document.getElementById('remove-image-selected-btn');
+    const addImageBtn = document.getElementById('add-image-selected-btn');
+    const findStockBtn = document.getElementById('find-stock-images-btn');
     
     if (count > 0 && selectModeActive) {
         deleteBtn.classList.remove('d-none');
+        removeImageBtn.classList.remove('d-none');
+        addImageBtn.classList.remove('d-none');
+        findStockBtn.classList.remove('d-none');
+        
+        // Update counts for image buttons
+        document.getElementById('remove-image-count').textContent = count;
+        document.getElementById('add-image-count').textContent = count;
+        document.getElementById('find-stock-count').textContent = count;
         
         let queueableCount = 0;
+        let queuedCount = 0;
         selected.forEach(cb => {
             const card = cb.closest('.social-copy-card');
             const platform = card ? card.dataset.platform : '';
             if (platform === 'linkedin' || platform === 'threads') {
-                queueableCount++;
+                const postItem = cb.closest('.post-item');
+                const queueToggleBtn = postItem.querySelector('.queue-toggle-btn');
+                const isQueued = queueToggleBtn && queueToggleBtn.dataset.queued === 'true';
+                if (isQueued) {
+                    queuedCount++;
+                } else {
+                    queueableCount++;
+                }
             }
         });
         
         document.getElementById('queue-selected-count').textContent = queueableCount;
+        document.getElementById('unqueue-selected-count').textContent = queuedCount;
+        
         if (queueableCount > 0) {
             queueBtn.classList.remove('d-none');
         } else {
             queueBtn.classList.add('d-none');
         }
+        
+        if (queuedCount > 0) {
+            unqueueBtn.classList.remove('d-none');
+        } else {
+            unqueueBtn.classList.add('d-none');
+        }
     } else {
         deleteBtn.classList.add('d-none');
         queueBtn.classList.add('d-none');
+        unqueueBtn.classList.add('d-none');
+        removeImageBtn.classList.add('d-none');
+        addImageBtn.classList.add('d-none');
+        findStockBtn.classList.add('d-none');
     }
     
     const selectAllBtn = document.getElementById('select-all-btn');
@@ -2159,6 +2440,461 @@ async function queueSelectedPosts() {
         showToast(`Added ${successCount}, failed ${errorCount}`, errorCount > successCount ? 'error' : 'warning');
     }
     
+    toggleSelectMode();
+}
+
+async function unqueueSelectedPosts() {
+    const selected = document.querySelectorAll('.post-select-checkbox:checked');
+    
+    const postsToUnqueue = [];
+    selected.forEach(cb => {
+        const postItem = cb.closest('.post-item');
+        const queueBtn = postItem.querySelector('.queue-toggle-btn');
+        if (queueBtn && queueBtn.dataset.queued === 'true') {
+            const card = cb.closest('.social-copy-card');
+            const platform = card ? card.dataset.platform : '';
+            postsToUnqueue.push({
+                postId: parseInt(cb.dataset.postId),
+                platform: platform,
+                queueBtn: queueBtn
+            });
+        }
+    });
+    
+    if (postsToUnqueue.length === 0) {
+        alert('No queued posts selected');
+        return;
+    }
+    
+    if (!confirm(`Remove ${postsToUnqueue.length} post${postsToUnqueue.length !== 1 ? 's' : ''} from the queue?`)) {
+        return;
+    }
+    
+    const unqueueBtn = document.getElementById('unqueue-selected-btn');
+    const originalText = unqueueBtn.innerHTML;
+    unqueueBtn.innerHTML = '⏳ Removing...';
+    unqueueBtn.disabled = true;
+    
+    let successCount = 0;
+    let errorCount = 0;
+    
+    for (const post of postsToUnqueue) {
+        try {
+            const response = await fetch(`/compose/post/${post.postId}/unqueue`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                successCount++;
+                // Update the queue button UI
+                post.queueBtn.dataset.queued = 'false';
+                post.queueBtn.classList.remove('btn-success');
+                post.queueBtn.classList.add('btn-outline-success');
+                post.queueBtn.innerHTML = '➕';
+                post.queueBtn.disabled = false;
+                post.queueBtn.title = 'Add to queue';
+            } else {
+                errorCount++;
+            }
+        } catch (e) {
+            errorCount++;
+        }
+    }
+    
+    unqueueBtn.innerHTML = originalText;
+    unqueueBtn.disabled = false;
+    
+    if (errorCount === 0) {
+        showToast(`Removed ${successCount} post${successCount !== 1 ? 's' : ''} from queue`, 'success');
+    } else {
+        showToast(`Removed ${successCount}, failed ${errorCount}`, errorCount > successCount ? 'error' : 'warning');
+    }
+    
+    toggleSelectMode();
+}
+
+// Bulk image operations
+let bulkAddImageModal = null;
+
+function removeImageFromSelected() {
+    const selected = document.querySelectorAll('.post-select-checkbox:checked');
+    const postIds = Array.from(selected).map(cb => parseInt(cb.dataset.postId));
+    
+    if (postIds.length === 0) {
+        alert('No posts selected');
+        return;
+    }
+    
+    if (!confirm(`Remove images from ${postIds.length} selected post${postIds.length !== 1 ? 's' : ''}?`)) {
+        return;
+    }
+    
+    const btn = document.getElementById('remove-image-selected-btn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Removing...';
+    btn.disabled = true;
+    
+    fetch('/compose/posts/bulk-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_ids: postIds, image_url: null })
+    })
+    .then(response => response.json())
+    .then(data => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        
+        if (data.success) {
+            // Update UI - hide image previews for selected posts
+            postIds.forEach(postId => {
+                const preview = document.getElementById(`image-preview-${postId}`);
+                const addBtn = document.getElementById(`add-image-btn-${postId}`);
+                const editForm = document.getElementById(`image-edit-form-${postId}`);
+                
+                if (preview) {
+                    preview.classList.add('d-none');
+                    const img = preview.querySelector('img');
+                    if (img) img.src = '';
+                }
+                if (addBtn) addBtn.classList.remove('d-none');
+                if (editForm) editForm.classList.add('d-none');
+                
+                // Clear hidden fields
+                const urlInput = document.getElementById(`image-url-input-${postId}`);
+                const finalInput = document.getElementById(`post-final-image-url-${postId}`);
+                if (urlInput) urlInput.value = '';
+                if (finalInput) finalInput.value = '';
+            });
+            
+            showToast(`Removed images from ${data.updated_count} posts`, 'success');
+            toggleSelectMode();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to remove images'));
+        }
+    })
+    .catch(err => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        alert('Error removing images');
+    });
+}
+
+function showBulkAddImageModal() {
+    const selected = document.querySelectorAll('.post-select-checkbox:checked');
+    const count = selected.length;
+    
+    if (count === 0) {
+        alert('No posts selected');
+        return;
+    }
+    
+    // Reset modal state
+    document.getElementById('bulk-image-post-count').textContent = count;
+    document.getElementById('bulk-add-image-file').value = '';
+    document.getElementById('bulk-add-image-url').value = '';
+    document.getElementById('bulk-add-final-image-url').value = '';
+    document.getElementById('bulk-add-upload-preview').classList.add('d-none');
+    document.getElementById('bulk-add-url-preview').classList.add('d-none');
+    
+    // Reset to upload tab
+    switchBulkAddImageTab('upload');
+    
+    bulkAddImageModal = new bootstrap.Modal(document.getElementById('bulkAddImageModal'));
+    bulkAddImageModal.show();
+}
+
+function switchBulkAddImageTab(tab) {
+    const tabs = document.querySelectorAll('#bulk-add-image-tabs .nav-link');
+    tabs.forEach(t => t.classList.remove('active'));
+    
+    document.getElementById('bulk-add-upload-pane').classList.add('d-none');
+    document.getElementById('bulk-add-url-pane').classList.add('d-none');
+    document.getElementById('bulk-add-library-pane').classList.add('d-none');
+    
+    if (tab === 'upload') {
+        tabs[0].classList.add('active');
+        document.getElementById('bulk-add-upload-pane').classList.remove('d-none');
+    } else if (tab === 'url') {
+        tabs[1].classList.add('active');
+        document.getElementById('bulk-add-url-pane').classList.remove('d-none');
+    } else if (tab === 'library') {
+        tabs[2].classList.add('active');
+        document.getElementById('bulk-add-library-pane').classList.remove('d-none');
+        loadBulkAddImageLibrary();
+    }
+}
+
+function handleBulkAddImageFileSelect(input) {
+    const file = input.files[0];
+    if (!file) return;
+    
+    const formData = new FormData();
+    formData.append('image', file);
+    
+    const preview = document.getElementById('bulk-add-upload-preview');
+    const img = preview.querySelector('img');
+    const filename = document.getElementById('bulk-add-filename');
+    
+    // Show loading state
+    preview.classList.remove('d-none');
+    filename.textContent = 'Uploading...';
+    
+    fetch('/compose/upload-image', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('bulk-add-final-image-url').value = data.image_url;
+            img.src = data.image_url;
+            filename.textContent = file.name;
+            showToast('Image uploaded!', 'success');
+        } else {
+            preview.classList.add('d-none');
+            alert('Upload failed: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        preview.classList.add('d-none');
+        alert('Upload error');
+    });
+}
+
+function previewBulkAddImageUrl() {
+    const url = document.getElementById('bulk-add-image-url').value.trim();
+    if (!url) return;
+    
+    const preview = document.getElementById('bulk-add-url-preview');
+    const img = preview.querySelector('img');
+    
+    img.onload = function() {
+        preview.classList.remove('d-none');
+        document.getElementById('bulk-add-final-image-url').value = url;
+    };
+    img.onerror = function() {
+        preview.classList.add('d-none');
+        alert('Could not load image from URL');
+    };
+    img.src = url;
+}
+
+function loadBulkAddImageLibrary() {
+    const grid = document.getElementById('bulk-add-library-grid');
+    grid.innerHTML = '<div class="text-muted small">Loading...</div>';
+    
+    fetch('/compose/list-images')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.images.length > 0) {
+                grid.innerHTML = '';
+                data.images.forEach(img => {
+                    const div = document.createElement('div');
+                    div.className = 'library-image-item';
+                    div.style.cssText = 'cursor: pointer; border: 2px solid transparent; border-radius: 4px; padding: 2px;';
+                    div.innerHTML = `<img src="${img.url}" alt="${img.filename}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px;">`;
+                    div.onclick = function() {
+                        // Remove selection from other items
+                        grid.querySelectorAll('.library-image-item').forEach(i => {
+                            i.style.borderColor = 'transparent';
+                        });
+                        // Select this item
+                        div.style.borderColor = '#0d6efd';
+                        document.getElementById('bulk-add-final-image-url').value = img.url;
+                    };
+                    grid.appendChild(div);
+                });
+            } else {
+                grid.innerHTML = '<div class="text-muted small">No images in library</div>';
+            }
+        })
+        .catch(err => {
+            grid.innerHTML = '<div class="text-muted small">Failed to load library</div>';
+        });
+}
+
+function applyBulkImage() {
+    const imageUrl = document.getElementById('bulk-add-final-image-url').value.trim();
+    
+    // Also check URL input if no final URL set
+    if (!imageUrl) {
+        const urlInput = document.getElementById('bulk-add-image-url').value.trim();
+        if (urlInput) {
+            document.getElementById('bulk-add-final-image-url').value = urlInput;
+            applyBulkImageWithUrl(urlInput);
+            return;
+        }
+        alert('Please select or upload an image first');
+        return;
+    }
+    
+    applyBulkImageWithUrl(imageUrl);
+}
+
+function applyBulkImageWithUrl(imageUrl) {
+    const selected = document.querySelectorAll('.post-select-checkbox:checked');
+    const postIds = Array.from(selected).map(cb => parseInt(cb.dataset.postId));
+    
+    if (postIds.length === 0) {
+        alert('No posts selected');
+        return;
+    }
+    
+    const btn = document.getElementById('apply-bulk-image-btn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Applying...';
+    btn.disabled = true;
+    
+    fetch('/compose/posts/bulk-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_ids: postIds, image_url: imageUrl })
+    })
+    .then(response => response.json())
+    .then(data => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        
+        if (data.success) {
+            // Update UI - show image previews for selected posts
+            postIds.forEach(postId => {
+                const preview = document.getElementById(`image-preview-${postId}`);
+                const addBtn = document.getElementById(`add-image-btn-${postId}`);
+                const editForm = document.getElementById(`image-edit-form-${postId}`);
+                
+                if (preview) {
+                    const img = preview.querySelector('img');
+                    const urlSpan = preview.querySelector('.text-truncate');
+                    if (img) img.src = imageUrl;
+                    if (urlSpan) urlSpan.textContent = imageUrl;
+                    preview.classList.remove('d-none');
+                }
+                if (addBtn) addBtn.classList.add('d-none');
+                if (editForm) editForm.classList.add('d-none');
+                
+                // Update hidden fields
+                const urlInput = document.getElementById(`image-url-input-${postId}`);
+                const finalInput = document.getElementById(`post-final-image-url-${postId}`);
+                if (urlInput) urlInput.value = imageUrl;
+                if (finalInput) finalInput.value = imageUrl;
+            });
+            
+            if (bulkAddImageModal) bulkAddImageModal.hide();
+            showToast(`Added image to ${data.updated_count} posts`, 'success');
+            toggleSelectMode();
+        } else {
+            alert('Error: ' + (data.error || 'Failed to add images'));
+        }
+    })
+    .catch(err => {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        alert('Error adding images');
+    });
+}
+
+async function findStockImagesForSelected() {
+    const selected = document.querySelectorAll('.post-select-checkbox:checked');
+    const postIds = Array.from(selected).map(cb => parseInt(cb.dataset.postId));
+    
+    if (postIds.length === 0) {
+        alert('No posts selected');
+        return;
+    }
+    
+    // Check if stock images API is configured
+    const statusResponse = await fetch('/compose/stock-images/status');
+    const statusData = await statusResponse.json();
+    
+    if (!statusData.configured) {
+        alert('Stock image API not configured.\n\nAdd UNSPLASH_ACCESS_KEY to your .env file to enable this feature (free!).\n\nSign up at: https://unsplash.com/developers');
+        return;
+    }
+    
+    if (!confirm(`Find and add stock images to ${postIds.length} selected post${postIds.length !== 1 ? 's' : ''}?\n\nThis will automatically search for relevant images based on each post's content.`)) {
+        return;
+    }
+    
+    const btn = document.getElementById('find-stock-images-btn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Finding images...';
+    btn.disabled = true;
+    
+    let successCount = 0;
+    let skipCount = 0;
+    let errorCount = 0;
+    
+    for (const postId of postIds) {
+        try {
+            // Check if post already has an image
+            const preview = document.getElementById(`image-preview-${postId}`);
+            const hasImage = preview && !preview.classList.contains('d-none');
+            
+            if (hasImage) {
+                skipCount++;
+                continue;
+            }
+            
+            // Fetch stock image for this post
+            const response = await fetch(`/compose/post/${postId}/stock-image?count=1`);
+            const data = await response.json();
+            
+            if (data.success && data.images && data.images.length > 0) {
+                const imageUrl = data.images[0].url;
+                
+                // Apply the image to the post
+                const applyResponse = await fetch(`/compose/post/${postId}/stock-image`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image_url: imageUrl })
+                });
+                const applyData = await applyResponse.json();
+                
+                if (applyData.success) {
+                    successCount++;
+                    
+                    // Update UI
+                    const addBtn = document.getElementById(`add-image-btn-${postId}`);
+                    const editForm = document.getElementById(`image-edit-form-${postId}`);
+                    
+                    if (preview) {
+                        const img = preview.querySelector('img');
+                        const urlSpan = preview.querySelector('.text-truncate');
+                        if (img) img.src = imageUrl;
+                        if (urlSpan) urlSpan.textContent = imageUrl;
+                        preview.classList.remove('d-none');
+                    }
+                    if (addBtn) addBtn.classList.add('d-none');
+                    if (editForm) editForm.classList.add('d-none');
+                    
+                    // Update hidden fields
+                    const urlInput = document.getElementById(`image-url-input-${postId}`);
+                    const finalInput = document.getElementById(`post-final-image-url-${postId}`);
+                    if (urlInput) urlInput.value = imageUrl;
+                    if (finalInput) finalInput.value = imageUrl;
+                } else {
+                    errorCount++;
+                }
+            } else {
+                errorCount++;
+            }
+        } catch (e) {
+            errorCount++;
+        }
+        
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    
+    btn.innerHTML = originalText;
+    btn.disabled = false;
+    
+    let message = `Added images to ${successCount} post${successCount !== 1 ? 's' : ''}`;
+    if (skipCount > 0) message += `, skipped ${skipCount} (already have images)`;
+    if (errorCount > 0) message += `, ${errorCount} failed`;
+    
+    showToast(message, errorCount > 0 ? 'warning' : 'success');
     toggleSelectMode();
 }
 
@@ -2382,6 +3118,7 @@ function applyPostFilters() {
     const usedFilter = document.getElementById('filter-used').value;
     const queuedFilter = document.getElementById('filter-queued').value;
     const platformFilter = document.getElementById('filter-platform').value;
+    const imageFilter = document.getElementById('filter-image').value;
     
     const cards = document.querySelectorAll('#saved-posts-container .social-copy-card');
     let visiblePosts = 0;
@@ -2416,6 +3153,14 @@ function applyPostFilters() {
                 const isQueued = queueBtn && queueBtn.dataset.queued === 'true';
                 if (queuedFilter === 'queued' && !isQueued) show = false;
                 if (queuedFilter === 'not-queued' && isQueued) show = false;
+            }
+            
+            // Image filter
+            if (imageFilter && show) {
+                const imagePreview = post.querySelector('[id^="image-preview-"]');
+                const hasImage = imagePreview && !imagePreview.classList.contains('d-none');
+                if (imageFilter === 'has-image' && !hasImage) show = false;
+                if (imageFilter === 'no-image' && hasImage) show = false;
             }
             
             post.style.display = show ? '' : 'none';
@@ -2459,6 +3204,7 @@ function clearPostFilters() {
     document.getElementById('filter-used').value = '';
     document.getElementById('filter-queued').value = '';
     document.getElementById('filter-platform').value = '';
+    document.getElementById('filter-image').value = '';
     applyPostFilters();
 }
 </script>
