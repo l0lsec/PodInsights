@@ -1682,6 +1682,40 @@ def edit_social_post_image(post_id: int):
     return jsonify({"success": True, "image_url": image_url})
 
 
+@app.route('/social/posts/bulk-image', methods=['POST'])
+def social_bulk_update_images():
+    """Bulk update images for multiple social posts."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+    
+    post_ids = data.get('post_ids', [])
+    image_url = data.get('image_url')  # None to remove image
+    
+    if not post_ids:
+        return jsonify({"error": "No post IDs provided"}), 400
+    
+    # Convert to integers
+    try:
+        post_ids = [int(pid) for pid in post_ids]
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid post IDs"}), 400
+    
+    # Update each post
+    updated_count = 0
+    for post_id in post_ids:
+        post = get_social_post(post_id)
+        if post:
+            update_social_post_image(post_id, image_url)
+            updated_count += 1
+    
+    return jsonify({
+        "success": True,
+        "updated_count": updated_count,
+        "message": f"Updated {updated_count} posts"
+    })
+
+
 @app.route('/posts/bulk-replace', methods=['POST'])
 def bulk_replace_posts():
     """Replace text in all posts of a given type, optionally filtered by post IDs."""
