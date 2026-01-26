@@ -1695,7 +1695,9 @@ def bulk_replace_posts():
     replace_text = data.get('replace', '')
     post_type = data.get('post_type', 'social')  # 'social' or 'standalone'
     case_sensitive = data.get('case_sensitive', False)
+    whole_word = data.get('whole_word', False)
     post_ids = data.get('post_ids')  # Optional list of post IDs to filter
+    excluded_matches = data.get('excluded_matches')  # Optional dict of excluded matches
     
     if not find_text:
         return jsonify({"error": "Find text is required"}), 400
@@ -1716,7 +1718,9 @@ def bulk_replace_posts():
             replace_text=replace_text,
             post_type=post_type,
             case_sensitive=case_sensitive,
+            whole_word=whole_word,
             post_ids=post_ids,
+            excluded_matches=excluded_matches,
         )
         return jsonify({
             "success": True,

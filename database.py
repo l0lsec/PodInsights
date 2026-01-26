@@ -7,7 +7,7 @@ web interface. Each function wraps a query so callers don't need to know SQL.
 from __future__ import annotations
 
 import sqlite3
-from typing import Iterable, Optional, List
+from typing import Dict, Iterable, Optional, List
 from datetime import datetime
 
 DB_PATH = "episodes.db"
@@ -850,7 +850,9 @@ def bulk_replace_post_content(
     replace_text: str,
     post_type: str,
     case_sensitive: bool = False,
+    whole_word: bool = False,
     post_ids: Optional[List[int]] = None,
+    excluded_matches: Optional[Dict[str, bool]] = None,
     db_path: str = DB_PATH,
 ) -> int:
     """Replace text in posts of a given type, optionally filtered by post IDs.
@@ -860,7 +862,9 @@ def bulk_replace_post_content(
         replace_text: The text to replace with
         post_type: 'social' for social_posts or 'standalone' for standalone_posts
         case_sensitive: Whether to do case-sensitive matching
+        whole_word: Whether to match whole words only
         post_ids: Optional list of post IDs to limit replacement to
+        excluded_matches: Optional dict of excluded matches {"postId-matchIndex": True}
         
     Returns:
         Number of posts that were modified
@@ -868,6 +872,7 @@ def bulk_replace_post_content(
     import re
     
     table_name = "social_posts" if post_type == "social" else "standalone_posts"
+    excluded_matches = excluded_matches or {}
     
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -885,18 +890,52 @@ def bulk_replace_post_content(
         
         affected_count = 0
         flags = 0 if case_sensitive else re.IGNORECASE
-        pattern = re.compile(re.escape(find_text), flags)
+        
+        # Build pattern with optional word boundaries
+        if whole_word:
+            pattern = re.compile(r'\b' + re.escape(find_text) + r'\b', flags)
+        else:
+            pattern = re.compile(re.escape(find_text), flags)
         
         for post in posts:
+            post_id = post['id']
             content = post['content'] or ''
-            if pattern.search(content):
+            
+            # Check if any matches in this post are NOT excluded
+            matches = list(pattern.finditer(content))
+            if not matches:
+                continue
+            
+            # If there are excluded matches for this post, do selective replacement
+            has_exclusions = any(f"{post_id}-{i+1}" in excluded_matches for i in range(len(matches)))
+            
+            if has_exclusions:
+                # Do selective replacement - replace only non-excluded matches
+                new_content = []
+                last_end = 0
+                for i, match in enumerate(matches):
+                    match_key = f"{post_id}-{i+1}"
+                    # Add content before this match
+                    new_content.append(content[last_end:match.start()])
+                    # Add either replacement or original based on exclusion
+                    if match_key in excluded_matches:
+                        new_content.append(match.group())  # Keep original
+                    else:
+                        new_content.append(replace_text)  # Replace
+                    last_end = match.end()
+                # Add remaining content after last match
+                new_content.append(content[last_end:])
+                new_content = ''.join(new_content)
+            else:
+                # No exclusions, replace all matches
                 new_content = pattern.sub(replace_text, content)
-                if new_content != content:
-                    conn.execute(
-                        f"UPDATE {table_name} SET content = ? WHERE id = ?",
-                        (new_content, post['id']),
-                    )
-                    affected_count += 1
+            
+            if new_content != content:
+                conn.execute(
+                    f"UPDATE {table_name} SET content = ? WHERE id = ?",
+                    (new_content, post_id),
+                )
+                affected_count += 1
         
         conn.commit()
     

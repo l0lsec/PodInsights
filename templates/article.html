@@ -1621,6 +1621,7 @@ function clearPostFilters() {
 
 let searchReplacePostData = [];
 let searchDebounceTimer = null;
+let excludedMatches = {}; // { "postId-matchIndex": true } for excluded matches
 
 function openSearchReplaceModal() {
     // Gather post data from visible (non-filtered) posts only
@@ -1669,6 +1670,7 @@ function openSearchReplaceModal() {
     document.getElementById('search-find-input').value = '';
     document.getElementById('search-replace-input').value = '';
     document.getElementById('search-case-sensitive').checked = false;
+    document.getElementById('search-whole-word').checked = false;
     document.getElementById('search-match-count').textContent = '0 matches in 0 posts';
     document.getElementById('search-empty-state').classList.remove('d-none');
     document.getElementById('search-results-list').classList.add('d-none');
@@ -1676,6 +1678,8 @@ function openSearchReplaceModal() {
     document.getElementById('replace-all-btn').disabled = true;
     document.getElementById('search-select-controls').classList.add('d-none');
     document.getElementById('search-select-all').checked = true;
+    document.getElementById('search-exclude-words').value = '';
+    excludedMatches = {}; // Reset excluded matches
     
     new bootstrap.Modal(document.getElementById('searchReplaceModal')).show();
 }
@@ -1692,11 +1696,16 @@ function doSearch() {
     const findText = document.getElementById('search-find-input').value;
     const replaceText = document.getElementById('search-replace-input').value;
     const caseSensitive = document.getElementById('search-case-sensitive').checked;
+    const wholeWord = document.getElementById('search-whole-word').checked;
+    const excludeWordsInput = document.getElementById('search-exclude-words').value;
     
     const emptyState = document.getElementById('search-empty-state');
     const resultsList = document.getElementById('search-results-list');
     const matchCountBadge = document.getElementById('search-match-count');
     const replaceBtn = document.getElementById('replace-all-btn');
+    
+    // Reset excluded matches when search changes
+    excludedMatches = {};
     
     if (!findText.trim()) {
         emptyState.classList.remove('d-none');
@@ -1705,17 +1714,39 @@ function doSearch() {
         matchCountBadge.textContent = '0 matches in 0 posts';
         replaceBtn.disabled = true;
         document.getElementById('search-select-controls').classList.add('d-none');
+        document.getElementById('search-click-hint').classList.add('d-none');
         return;
     }
+    
+    // Parse exclude words (comma-separated, trimmed)
+    const excludeWords = excludeWordsInput
+        .split(',')
+        .map(w => w.trim().toLowerCase())
+        .filter(w => w.length > 0);
     
     // Find matching posts
     const matchingPosts = [];
     let totalMatches = 0;
+    let excludedPostCount = 0;
+    
+    // Build search pattern with optional whole word boundaries
+    const searchPattern = wholeWord ? `\\b${escapeRegex(findText)}\\b` : escapeRegex(findText);
     
     searchReplacePostData.forEach(post => {
         const content = post.content;
+        const contentLower = content.toLowerCase();
+        
+        // Check if post contains any excluded words
+        if (excludeWords.length > 0) {
+            const hasExcludedWord = excludeWords.some(word => contentLower.includes(word));
+            if (hasExcludedWord) {
+                excludedPostCount++;
+                return; // Skip this post
+            }
+        }
+        
         const flags = caseSensitive ? 'g' : 'gi';
-        const regex = new RegExp(escapeRegex(findText), flags);
+        const regex = new RegExp(searchPattern, flags);
         const matches = content.match(regex);
         
         if (matches && matches.length > 0) {
@@ -1723,24 +1754,33 @@ function doSearch() {
             matchingPosts.push({
                 ...post,
                 matchCount: matches.length,
-                highlightedContent: highlightMatches(content, findText, caseSensitive),
-                previewContent: replaceText ? showReplacementPreview(content, findText, replaceText, caseSensitive) : null
+                highlightedContent: highlightMatches(content, findText, caseSensitive, wholeWord, post.id),
+                previewContent: replaceText ? showReplacementPreview(content, findText, replaceText, caseSensitive, wholeWord, post.id) : null
             });
         }
     });
     
     // Update UI
-    matchCountBadge.textContent = `${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in ${matchingPosts.length} post${matchingPosts.length !== 1 ? 's' : ''}`;
+    let countText = `${totalMatches} match${totalMatches !== 1 ? 'es' : ''} in ${matchingPosts.length} post${matchingPosts.length !== 1 ? 's' : ''}`;
+    if (excludedPostCount > 0) {
+        countText += ` (${excludedPostCount} excluded)`;
+    }
+    matchCountBadge.textContent = countText;
     replaceBtn.disabled = matchingPosts.length === 0;
     
     if (matchingPosts.length === 0) {
+        let emptyMessage = `No matches found for "<strong>${escapeHtml(findText)}</strong>"`;
+        if (excludedPostCount > 0) {
+            emptyMessage += `<br><small class="text-muted">(${excludedPostCount} post${excludedPostCount !== 1 ? 's' : ''} excluded by filter)</small>`;
+        }
         emptyState.innerHTML = `
             <div style="font-size: 2rem;">😕</div>
-            <p class="mb-0">No matches found for "<strong>${escapeHtml(findText)}</strong>"</p>
+            <p class="mb-0">${emptyMessage}</p>
         `;
         emptyState.classList.remove('d-none');
         resultsList.classList.add('d-none');
         document.getElementById('search-select-controls').classList.add('d-none');
+        document.getElementById('search-click-hint').classList.add('d-none');
         return;
     }
     
@@ -1748,6 +1788,7 @@ function doSearch() {
     emptyState.classList.add('d-none');
     resultsList.classList.remove('d-none');
     document.getElementById('search-select-controls').classList.remove('d-none');
+    document.getElementById('search-click-hint').classList.remove('d-none');
     
     let html = '';
     matchingPosts.forEach(post => {
@@ -1800,18 +1841,46 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-function highlightMatches(text, searchTerm, caseSensitive) {
+function highlightMatches(text, searchTerm, caseSensitive, wholeWord, postId) {
     const escaped = escapeHtml(text);
     const flags = caseSensitive ? 'g' : 'gi';
-    const regex = new RegExp(`(${escapeRegex(escapeHtml(searchTerm))})`, flags);
-    return escaped.replace(regex, '<mark style="background-color: #fff3cd; padding: 0 2px;">$1</mark>');
+    const escapedSearchTerm = escapeRegex(escapeHtml(searchTerm));
+    const searchPattern = wholeWord ? `\\b(${escapedSearchTerm})\\b` : `(${escapedSearchTerm})`;
+    const regex = new RegExp(searchPattern, flags);
+    
+    let matchIndex = 0;
+    return escaped.replace(regex, (match, p1) => {
+        matchIndex++;
+        const key = `${postId}-${matchIndex}`;
+        const isExcluded = excludedMatches[key];
+        const bgColor = isExcluded ? '#e9ecef' : '#fff3cd';
+        const textDeco = isExcluded ? 'line-through' : 'none';
+        return `<mark class="search-match" data-post-id="${postId}" data-match-index="${matchIndex}" 
+                style="background-color: ${bgColor}; padding: 0 2px; cursor: pointer; text-decoration: ${textDeco};" 
+                onclick="toggleMatchSelection(this)" title="Click to exclude/include">${p1}</mark>`;
+    });
 }
 
-function showReplacementPreview(text, findText, replaceText, caseSensitive) {
+function showReplacementPreview(text, findText, replaceText, caseSensitive, wholeWord, postId) {
     const escaped = escapeHtml(text);
     const flags = caseSensitive ? 'g' : 'gi';
-    const regex = new RegExp(`(${escapeRegex(escapeHtml(findText))})`, flags);
-    return escaped.replace(regex, `<span style="background-color: #d4edda; padding: 0 2px;">${escapeHtml(replaceText)}</span>`);
+    const escapedFindText = escapeRegex(escapeHtml(findText));
+    const searchPattern = wholeWord ? `\\b(${escapedFindText})\\b` : `(${escapedFindText})`;
+    const regex = new RegExp(searchPattern, flags);
+    
+    let matchIndex = 0;
+    return escaped.replace(regex, (match, p1) => {
+        matchIndex++;
+        const key = `${postId}-${matchIndex}`;
+        const isExcluded = excludedMatches[key];
+        if (isExcluded) {
+            // Show original text (not replaced) for excluded matches
+            return `<span style="background-color: #e9ecef; padding: 0 2px; text-decoration: line-through;">${p1}</span>`;
+        } else {
+            // Show replacement for included matches
+            return `<span style="background-color: #d4edda; padding: 0 2px;">${escapeHtml(replaceText)}</span>`;
+        }
+    });
 }
 
 function toggleSearchSelectAll(checkbox) {
@@ -1838,10 +1907,50 @@ function updateSearchSelectedCount() {
     document.getElementById('replace-all-btn').disabled = selected === 0;
 }
 
+function toggleMatchSelection(element) {
+    const postId = element.dataset.postId;
+    const matchIndex = element.dataset.matchIndex;
+    const key = `${postId}-${matchIndex}`;
+    
+    if (excludedMatches[key]) {
+        delete excludedMatches[key];
+        element.style.backgroundColor = '#fff3cd'; // Selected (yellow)
+        element.style.textDecoration = 'none';
+    } else {
+        excludedMatches[key] = true;
+        element.style.backgroundColor = '#e9ecef'; // Excluded (gray)
+        element.style.textDecoration = 'line-through';
+    }
+    
+    // Update the replacement preview for this post
+    updateReplacementPreviewForPost(postId);
+}
+
+function updateReplacementPreviewForPost(postId) {
+    const findText = document.getElementById('search-find-input').value;
+    const replaceText = document.getElementById('search-replace-input').value;
+    const caseSensitive = document.getElementById('search-case-sensitive').checked;
+    const wholeWord = document.getElementById('search-whole-word').checked;
+    
+    // Find the post data
+    const post = searchReplacePostData.find(p => p.id === postId);
+    if (!post || !replaceText) return;
+    
+    // Update the replacement preview in the card
+    const card = document.querySelector(`.search-result-card[data-post-id="${postId}"]`);
+    if (card) {
+        const previewEl = card.querySelector('.replacement-preview');
+        if (previewEl) {
+            previewEl.innerHTML = showReplacementPreview(post.content, findText, replaceText, caseSensitive, wholeWord, postId);
+        }
+    }
+}
+
 function executeReplaceAll() {
     const findText = document.getElementById('search-find-input').value;
     const replaceText = document.getElementById('search-replace-input').value;
     const caseSensitive = document.getElementById('search-case-sensitive').checked;
+    const wholeWord = document.getElementById('search-whole-word').checked;
     
     // Get selected post IDs
     const selectedPostIds = Array.from(document.querySelectorAll('.search-post-checkbox:checked'))
@@ -1872,7 +1981,9 @@ function executeReplaceAll() {
             replace: replaceText,
             post_type: 'social',
             case_sensitive: caseSensitive,
-            post_ids: selectedPostIds
+            whole_word: wholeWord,
+            post_ids: selectedPostIds,
+            excluded_matches: excludedMatches
         }),
     })
     .then(response => response.json())
@@ -1989,10 +2100,20 @@ function executeReplaceAll() {
                         <input type="text" class="form-control" id="search-replace-input" placeholder="Replacement text..." oninput="performLiveSearch()">
                     </div>
                 </div>
+                <div class="mb-3">
+                    <label class="form-label">Exclude posts containing <small class="text-muted">(comma-separated)</small></label>
+                    <input type="text" class="form-control" id="search-exclude-words" placeholder="e.g., draft, test, ignore" oninput="performLiveSearch()">
+                </div>
                 <div class="d-flex justify-content-between align-items-center mb-3">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="search-case-sensitive" onchange="performLiveSearch()">
-                        <label class="form-check-label" for="search-case-sensitive">Case sensitive</label>
+                    <div class="d-flex gap-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="search-case-sensitive" onchange="performLiveSearch()">
+                            <label class="form-check-label" for="search-case-sensitive">Case sensitive</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="search-whole-word" onchange="performLiveSearch()">
+                            <label class="form-check-label" for="search-whole-word">Whole word</label>
+                        </div>
                     </div>
                     <div>
                         <span class="badge bg-info" id="search-match-count">0 matches in 0 posts</span>
@@ -2005,6 +2126,9 @@ function executeReplaceAll() {
                         <label class="form-check-label" for="search-select-all">Select All</label>
                     </div>
                     <span class="text-muted small" id="search-selected-count">0 of 0 selected</span>
+                </div>
+                <div class="text-muted small mb-2 d-none" id="search-click-hint">
+                    💡 Click on highlighted text to exclude individual matches from replacement
                 </div>
                 <div id="search-results-container" style="max-height: 400px; overflow-y: auto;">
                     <div class="text-center text-muted py-4" id="search-empty-state">
