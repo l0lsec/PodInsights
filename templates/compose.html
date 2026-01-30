@@ -270,9 +270,179 @@
             <!-- Freeform Tab -->
             <div class="tab-pane fade {% if not selected_source %}show active{% endif %}" id="freeform-content" role="tabpanel">
                 <div class="mb-3">
-                    <label class="form-label fw-bold">Topic or Prompt</label>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label fw-bold mb-0">Topic or Prompt</label>
+                        {% if recent_prompts %}
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="recent-prompts-btn" data-bs-toggle="dropdown" aria-expanded="false" data-bs-auto-close="outside">
+                                📜 Recent Prompts
+                            </button>
+                            <div class="dropdown-menu dropdown-menu-end p-0" id="recent-prompts-menu" style="min-width: 420px; max-height: 400px;">
+                                <!-- Header with bulk actions -->
+                                <div class="px-3 py-2 bg-light border-bottom d-flex justify-content-between align-items-center">
+                                    <div class="form-check mb-0">
+                                        <input type="checkbox" class="form-check-input" id="select-all-prompts" onchange="toggleAllPrompts(this)">
+                                        <label class="form-check-label small" for="select-all-prompts">Select All</label>
+                                    </div>
+                                    <button class="btn btn-sm btn-outline-danger d-none" id="delete-selected-prompts-btn" onclick="deleteSelectedPrompts()">
+                                        🗑️ Delete Selected (<span id="selected-prompts-count">0</span>)
+                                    </button>
+                                </div>
+                                
+                                <!-- Scrollable prompts list -->
+                                <div style="max-height: 280px; overflow-y: auto;">
+                                    {% for prompt in recent_prompts %}
+                                    <div class="dropdown-item d-flex align-items-start gap-2 py-2 prompt-item" data-index="{{ loop.index0 }}">
+                                        <input type="checkbox" class="form-check-input mt-1 prompt-checkbox" data-index="{{ loop.index0 }}" onchange="updateSelectedPromptsCount()" onclick="event.stopPropagation()">
+                                        <span class="flex-grow-1 small text-wrap" style="cursor: pointer; white-space: normal; word-wrap: break-word;" onclick="useRecentPrompt({{ loop.index0 }})">
+                                            {{ prompt.preview }}
+                                        </span>
+                                        <button class="btn btn-sm btn-link text-danger p-0" onclick="deletePrompt({{ loop.index0 }}); event.stopPropagation();" title="Delete this prompt">
+                                            ✕
+                                        </button>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                
+                                <!-- Footer with Clear All -->
+                                <div class="border-top">
+                                    <a class="dropdown-item small text-danger py-2" href="#" onclick="clearRecentPrompts(); return false;">
+                                        🗑️ Clear All Prompts
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
                     <textarea class="form-control" id="freeform-input" rows="4" 
                               placeholder="Enter a topic, idea, or prompt to generate posts about...&#10;&#10;Example: The importance of multi-factor authentication in 2026"></textarea>
+                    <script>
+                        // Store recent prompts for JavaScript access
+                        const recentPrompts = {{ recent_prompts|default([])|tojson|safe }};
+                        
+                        function useRecentPrompt(index) {
+                            if (recentPrompts[index]) {
+                                const textarea = document.getElementById('freeform-input');
+                                textarea.value = recentPrompts[index].content;
+                                textarea.focus();
+                                // Close dropdown
+                                const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('recent-prompts-btn'));
+                                if (dropdown) dropdown.hide();
+                            }
+                        }
+                        
+                        function toggleAllPrompts(checkbox) {
+                            const checkboxes = document.querySelectorAll('.prompt-checkbox');
+                            checkboxes.forEach(cb => cb.checked = checkbox.checked);
+                            updateSelectedPromptsCount();
+                        }
+                        
+                        function updateSelectedPromptsCount() {
+                            const checked = document.querySelectorAll('.prompt-checkbox:checked').length;
+                            const countSpan = document.getElementById('selected-prompts-count');
+                            const deleteBtn = document.getElementById('delete-selected-prompts-btn');
+                            const selectAllCheckbox = document.getElementById('select-all-prompts');
+                            const totalCheckboxes = document.querySelectorAll('.prompt-checkbox').length;
+                            
+                            countSpan.textContent = checked;
+                            
+                            if (checked > 0) {
+                                deleteBtn.classList.remove('d-none');
+                            } else {
+                                deleteBtn.classList.add('d-none');
+                            }
+                            
+                            // Update select all checkbox state
+                            selectAllCheckbox.checked = checked === totalCheckboxes && totalCheckboxes > 0;
+                            selectAllCheckbox.indeterminate = checked > 0 && checked < totalCheckboxes;
+                        }
+                        
+                        function deletePrompt(index) {
+                            if (!recentPrompts[index]) return;
+                            
+                            const formData = new FormData();
+                            formData.append('prompt', recentPrompts[index].content);
+                            
+                            fetch('{{ url_for("compose_delete_prompt") }}', {
+                                method: 'POST',
+                                body: formData,
+                            })
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    // Remove the item from the UI
+                                    const item = document.querySelector(`.prompt-item[data-index="${index}"]`);
+                                    if (item) item.remove();
+                                    // Update the prompts array
+                                    recentPrompts.splice(index, 1);
+                                    // If no more prompts, reload to hide dropdown
+                                    if (recentPrompts.length === 0) {
+                                        location.reload();
+                                    }
+                                } else {
+                                    alert('Error: ' + (data.error || 'Failed to delete prompt'));
+                                }
+                            })
+                            .catch(error => {
+                                alert('Error: ' + error.message);
+                            });
+                        }
+                        
+                        function deleteSelectedPrompts() {
+                            const checked = document.querySelectorAll('.prompt-checkbox:checked');
+                            if (checked.length === 0) return;
+                            
+                            if (!confirm(`Delete ${checked.length} selected prompt(s)? This cannot be undone.`)) {
+                                return;
+                            }
+                            
+                            const promptsToDelete = Array.from(checked).map(cb => {
+                                const index = parseInt(cb.dataset.index);
+                                return recentPrompts[index]?.content;
+                            }).filter(Boolean);
+                            
+                            fetch('{{ url_for("compose_delete_prompts_bulk") }}', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ prompts: promptsToDelete }),
+                            })
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    location.reload();
+                                } else {
+                                    alert('Error: ' + (data.error || 'Failed to delete prompts'));
+                                }
+                            })
+                            .catch(error => {
+                                alert('Error: ' + error.message);
+                            });
+                        }
+                        
+                        function clearRecentPrompts() {
+                            if (!confirm('Clear all recent prompts from history? This cannot be undone.')) {
+                                return;
+                            }
+                            
+                            fetch('{{ url_for("compose_clear_prompts") }}', {
+                                method: 'POST',
+                            })
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    // Close dropdown and reload to update UI
+                                    const dropdown = bootstrap.Dropdown.getInstance(document.getElementById('recent-prompts-btn'));
+                                    if (dropdown) dropdown.hide();
+                                    location.reload();
+                                } else {
+                                    alert('Error: ' + (data.error || 'Failed to clear prompts'));
+                                }
+                            })
+                            .catch(error => {
+                                alert('Error: ' + error.message);
+                            });
+                        }
+                    </script>
                 </div>
             </div>
             

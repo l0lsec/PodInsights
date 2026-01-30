@@ -116,6 +116,11 @@ from database import (
     add_uploaded_image,
     list_uploaded_images,
     delete_uploaded_image,
+    # Recent prompts
+    list_recent_prompts,
+    clear_recent_prompts,
+    delete_prompt_by_content,
+    delete_prompts_bulk,
 )
 from podinsights import (
     transcribe_audio,
@@ -2570,6 +2575,51 @@ def schedule_list():
     )
 
 
+@app.route('/schedule/list-json')
+def schedule_list_json():
+    """Return scheduled posts as JSON for AJAX refresh."""
+    status_filter = request.args.get('status', '')
+    platform_filter = request.args.get('platform', '')
+    
+    posts = list_scheduled_posts(
+        status=status_filter if status_filter else None,
+        platform=platform_filter if platform_filter else None,
+    )
+    
+    # Convert to list of dicts and format dates
+    scheduled = []
+    for p in posts:
+        post_dict = dict(p)
+        # Parse scheduled_for for display
+        if post_dict.get('scheduled_for'):
+            try:
+                dt = datetime.fromisoformat(post_dict['scheduled_for'])
+                post_dict['scheduled_for_display'] = dt.strftime('%Y-%m-%d %H:%M')
+            except (ValueError, TypeError):
+                post_dict['scheduled_for_display'] = post_dict['scheduled_for']
+        
+        # Add content preview (truncated)
+        content = post_dict.get('social_content') or post_dict.get('standalone_content') or ''
+        post_dict['content_preview'] = content[:100] + ('...' if len(content) > 100 else '')
+        
+        # Determine if it's draggable (only pending posts)
+        post_dict['is_draggable'] = post_dict.get('status') == 'pending'
+        
+        scheduled.append(post_dict)
+    
+    # Count posts by platform
+    linkedin_count = sum(1 for p in scheduled if p.get('platform') == 'linkedin')
+    threads_count = sum(1 for p in scheduled if p.get('platform') == 'threads')
+    
+    return jsonify({
+        "success": True,
+        "posts": scheduled,
+        "linkedin_count": linkedin_count,
+        "threads_count": threads_count,
+        "total_count": len(scheduled),
+    })
+
+
 @app.route('/schedule/<int:scheduled_id>/cancel', methods=['POST'])
 def schedule_cancel(scheduled_id: int):
     """Cancel a scheduled post."""
@@ -3256,6 +3306,17 @@ def compose_page():
     linkedin_connected = bool(get_linkedin_token())
     threads_connected = bool(get_threads_token())
     
+    # Get recent freeform prompts for reuse
+    recent_prompts = list_recent_prompts(limit=20)
+    recent_prompts_list = [
+        {
+            'content': p['source_content'],
+            'preview': p['source_content'][:80] + ('...' if len(p['source_content']) > 80 else ''),
+            'created_at': p['created_at'],
+        }
+        for p in recent_prompts
+    ]
+    
     return render_template(
         'compose.html',
         posts_by_platform=posts_by_platform,
@@ -3264,7 +3325,82 @@ def compose_page():
         selected_source=selected_source,
         linkedin_connected=linkedin_connected,
         threads_connected=threads_connected,
+        recent_prompts=recent_prompts_list,
     )
+
+
+@app.route('/compose/recent-prompts')
+def compose_recent_prompts():
+    """Return recent freeform prompts for reuse via AJAX."""
+    prompts = list_recent_prompts(limit=20)
+    prompts_list = [
+        {
+            'content': p['source_content'],
+            'preview': p['source_content'][:80] + ('...' if len(p['source_content']) > 80 else ''),
+            'created_at': p['created_at'],
+        }
+        for p in prompts
+    ]
+    return jsonify({
+        "success": True,
+        "prompts": prompts_list,
+    })
+
+
+@app.route('/compose/clear-prompts', methods=['POST'])
+def compose_clear_prompts():
+    """Clear the recent prompts history."""
+    try:
+        count = clear_recent_prompts()
+        return jsonify({
+            "success": True,
+            "message": f"Cleared {count} prompt(s) from history",
+            "count": count,
+        })
+    except Exception as e:
+        app.logger.exception("Failed to clear prompts")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/compose/delete-prompt', methods=['POST'])
+def compose_delete_prompt():
+    """Delete a single prompt from history."""
+    prompt_content = request.form.get('prompt', '').strip()
+    
+    if not prompt_content:
+        return jsonify({"error": "Prompt content is required"}), 400
+    
+    try:
+        count = delete_prompt_by_content(prompt_content)
+        return jsonify({
+            "success": True,
+            "message": f"Deleted prompt from history",
+            "count": count,
+        })
+    except Exception as e:
+        app.logger.exception("Failed to delete prompt")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/compose/delete-prompts-bulk', methods=['POST'])
+def compose_delete_prompts_bulk():
+    """Delete multiple prompts from history."""
+    data = request.get_json() or {}
+    prompts = data.get('prompts', [])
+    
+    if not prompts:
+        return jsonify({"error": "No prompts provided"}), 400
+    
+    try:
+        count = delete_prompts_bulk(prompts)
+        return jsonify({
+            "success": True,
+            "message": f"Deleted {len(prompts)} prompt(s) from history",
+            "count": count,
+        })
+    except Exception as e:
+        app.logger.exception("Failed to delete prompts")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/compose/generate', methods=['POST'])

@@ -2530,3 +2530,112 @@ def get_uploaded_image(image_id: int, db_path: str = DB_PATH) -> Optional[sqlite
             (image_id,),
         )
         return cur.fetchone()
+
+
+# =============================================================================
+# Recent Prompts Functions
+# =============================================================================
+
+
+def list_recent_prompts(limit: int = 20, db_path: str = DB_PATH) -> List[sqlite3.Row]:
+    """Get unique recent freeform prompts from standalone_posts.
+    
+    Returns distinct prompts ordered by most recently used, so users can
+    easily reuse previous prompts in the Command Center.
+    
+    Args:
+        limit: Maximum number of prompts to return (default 20)
+        
+    Returns:
+        List of rows with 'source_content' and 'created_at' fields
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute(
+            """
+            SELECT source_content, MAX(created_at) as created_at
+            FROM standalone_posts
+            WHERE source_type = 'freeform'
+            AND source_content IS NOT NULL
+            AND source_content != ''
+            GROUP BY source_content
+            ORDER BY MAX(created_at) DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+def clear_recent_prompts(db_path: str = DB_PATH) -> int:
+    """Clear the prompt history by setting source_content to empty for freeform posts.
+    
+    This preserves the generated posts but removes them from the recent prompts list.
+    
+    Returns:
+        Number of posts affected
+    """
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            UPDATE standalone_posts
+            SET source_content = ''
+            WHERE source_type = 'freeform'
+            AND source_content IS NOT NULL
+            AND source_content != ''
+            """
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def delete_prompt_by_content(prompt_content: str, db_path: str = DB_PATH) -> int:
+    """Delete a specific prompt from history by clearing its source_content.
+    
+    This preserves the generated posts but removes the prompt from the history.
+    
+    Args:
+        prompt_content: The exact prompt text to remove
+        
+    Returns:
+        Number of posts affected
+    """
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute(
+            """
+            UPDATE standalone_posts
+            SET source_content = ''
+            WHERE source_type = 'freeform'
+            AND source_content = ?
+            """,
+            (prompt_content,),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def delete_prompts_bulk(prompt_contents: List[str], db_path: str = DB_PATH) -> int:
+    """Delete multiple prompts from history by clearing their source_content.
+    
+    Args:
+        prompt_contents: List of prompt texts to remove
+        
+    Returns:
+        Number of posts affected
+    """
+    if not prompt_contents:
+        return 0
+    
+    with sqlite3.connect(db_path) as conn:
+        placeholders = ",".join("?" for _ in prompt_contents)
+        cur = conn.execute(
+            f"""
+            UPDATE standalone_posts
+            SET source_content = ''
+            WHERE source_type = 'freeform'
+            AND source_content IN ({placeholders})
+            """,
+            prompt_contents,
+        )
+        conn.commit()
+        return cur.rowcount

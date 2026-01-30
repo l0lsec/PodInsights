@@ -285,6 +285,9 @@ tr.not-draggable .drag-handle {
                 <button class="btn btn-sm btn-outline-danger d-none" id="delete-selected-btn" onclick="deleteSelected()">
                     🗑️ Delete Selected (<span id="selected-count">0</span>)
                 </button>
+                <button class="btn btn-sm btn-outline-primary" onclick="refreshQueue()" id="refresh-queue-btn" title="Refresh Queue">
+                    🔄 Refresh
+                </button>
                 <button class="btn btn-sm btn-outline-danger" onclick="clearQueue()" title="Clear all pending posts">
                     🗑️ Clear Pending
                 </button>
@@ -758,6 +761,174 @@ function refreshNextSlots() {
         .catch(() => {
             if (threadsSpan) threadsSpan.innerHTML = '<span class="text-muted">Error loading</span>';
         });
+}
+
+// Refresh the scheduled posts queue without full page reload
+function refreshQueue() {
+    const btn = document.getElementById('refresh-queue-btn');
+    const tbody = document.getElementById('schedule-tbody');
+    const linkedinBadge = document.querySelector('.badge[style*="0077B5"]');
+    const threadsBadge = document.querySelector('.badge.bg-dark');
+    const totalBadge = document.querySelector('.badge.bg-secondary');
+    
+    // Show loading state
+    const originalBtnText = btn.innerHTML;
+    btn.innerHTML = '⏳ Loading...';
+    btn.disabled = true;
+    if (tbody) tbody.style.opacity = '0.5';
+    
+    // Get current filter values
+    const statusFilter = document.querySelector('select[name="status"]')?.value || '';
+    const platformFilter = document.querySelector('select[name="platform"]')?.value || '';
+    
+    const params = new URLSearchParams();
+    if (statusFilter) params.append('status', statusFilter);
+    if (platformFilter) params.append('platform', platformFilter);
+    
+    fetch(`/schedule/list-json?${params.toString()}`)
+        .then(response => response.json())
+        .then(data => {
+            btn.innerHTML = originalBtnText;
+            btn.disabled = false;
+            if (tbody) tbody.style.opacity = '1';
+            
+            if (data.success) {
+                // Update badges
+                if (linkedinBadge) linkedinBadge.innerHTML = `💼 ${data.linkedin_count}`;
+                if (threadsBadge) threadsBadge.innerHTML = `🧵 ${data.threads_count}`;
+                if (totalBadge) totalBadge.textContent = `${data.total_count} total`;
+                
+                // Rebuild table body
+                if (tbody && data.posts) {
+                    rebuildQueueTable(data.posts);
+                }
+                
+                // Also refresh next slots
+                refreshNextSlots();
+            } else {
+                alert('Failed to refresh: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            btn.innerHTML = originalBtnText;
+            btn.disabled = false;
+            if (tbody) tbody.style.opacity = '1';
+            alert('Error refreshing queue: ' + error.message);
+        });
+}
+
+// Rebuild the queue table with new data
+function rebuildQueueTable(posts) {
+    const tbody = document.getElementById('schedule-tbody');
+    if (!tbody) return;
+    
+    if (posts.length === 0) {
+        // Show empty state - redirect to reload for proper template rendering
+        location.reload();
+        return;
+    }
+    
+    tbody.innerHTML = posts.map(post => {
+        const statusBadge = getStatusBadge(post.status, post.error_message);
+        const platformBadge = getPlatformBadge(post.platform);
+        const typeBadge = getTypeBadge(post.post_type);
+        const contentPreview = post.content_preview || post.article_topic || '<span class="text-muted">No content preview</span>';
+        const isDraggable = post.status === 'pending';
+        const rowClass = isDraggable ? '' : 'not-draggable';
+        
+        return `
+            <tr data-post-id="${post.id}" data-scheduled-for="${post.scheduled_for}" class="${rowClass}">
+                <td class="drag-handle" style="cursor: ${isDraggable ? 'grab' : 'not-allowed'}; text-align: center; color: ${isDraggable ? '#6c757d' : '#dee2e6'};">
+                    ${isDraggable ? '⋮⋮' : '&nbsp;'}
+                </td>
+                <td>
+                    <input type="checkbox" class="form-check-input post-checkbox" 
+                           data-post-id="${post.id}" onchange="updateSelectedCount()">
+                </td>
+                <td>${statusBadge}</td>
+                <td>
+                    <span title="${post.scheduled_for}">
+                        ${post.scheduled_for_display || post.scheduled_for}
+                    </span>
+                    ${post.posted_at ? `<br><small class="text-muted">Posted: ${post.posted_at}</small>` : ''}
+                </td>
+                <td>${typeBadge}</td>
+                <td class="description-cell" style="max-width: 300px;">${contentPreview}</td>
+                <td>${platformBadge}</td>
+                <td>${getActionButtons(post)}</td>
+            </tr>
+        `;
+    }).join('');
+    
+    // Reinitialize sortable after rebuild
+    initSortable();
+}
+
+function getStatusBadge(status, errorMessage) {
+    switch(status) {
+        case 'pending': return '<span class="badge bg-warning text-dark">⏳ Pending</span>';
+        case 'posted': return '<span class="badge bg-success">✅ Posted</span>';
+        case 'failed': return `<span class="badge bg-danger" title="${errorMessage || ''}">❌ Failed</span>`;
+        case 'cancelled': return '<span class="badge bg-secondary">🚫 Cancelled</span>';
+        default: return `<span class="badge bg-secondary">${status}</span>`;
+    }
+}
+
+function getPlatformBadge(platform) {
+    switch(platform) {
+        case 'linkedin': return '<span class="badge" style="background-color: #0077B5;">💼 LinkedIn</span>';
+        case 'threads': return '<span class="badge" style="background-color: #000000;">🧵 Threads</span>';
+        default: return `<span class="badge bg-secondary">${platform}</span>`;
+    }
+}
+
+function getTypeBadge(postType) {
+    switch(postType) {
+        case 'social': return '<span class="badge bg-info">Social Post</span>';
+        case 'article': return '<span class="badge bg-primary">Article</span>';
+        default: return `<span class="badge bg-secondary">${postType}</span>`;
+    }
+}
+
+function getActionButtons(post) {
+    if (post.status === 'pending') {
+        return `
+            <button class="btn btn-sm btn-outline-primary" onclick="openEditModal(${post.id}, '${post.scheduled_for}')" title="Edit Time">
+                ✏️ Time
+            </button>
+            <button class="btn btn-sm btn-success" onclick="postNow(${post.id}, '${post.platform}')" title="Post Now">
+                🚀 Post Now
+            </button>
+            <button class="btn btn-sm btn-outline-warning" onclick="cancelPost(${post.id})" title="Cancel">
+                🚫 Cancel
+            </button>
+        `;
+    } else if (post.status === 'posted' && post.linkedin_post_urn) {
+        if (post.platform === 'threads' && post.linkedin_post_urn.startsWith('http')) {
+            return `<a href="${post.linkedin_post_urn}" target="_blank" class="btn btn-sm btn-outline-dark" title="View on Threads">🔗 View</a>`;
+        } else if (post.platform === 'linkedin') {
+            return `<a href="https://www.linkedin.com/feed/update/${post.linkedin_post_urn}" target="_blank" class="btn btn-sm btn-outline-primary" title="View on LinkedIn">🔗 View</a>`;
+        }
+        return '';
+    } else if (post.status === 'failed') {
+        return `
+            <button class="btn btn-sm btn-outline-success" onclick="retryPost(${post.id})" title="Retry Posting">
+                🔄 Retry
+            </button>
+            <button class="btn btn-sm btn-outline-danger" onclick="deletePost(${post.id})" title="Delete">
+                🗑️ Delete
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="showError('${(post.error_message || '').replace(/'/g, "\\'")}')" title="Show Error">
+                ℹ️ Error
+            </button>
+        `;
+    } else {
+        return `
+            <button class="btn btn-sm btn-outline-danger" onclick="deletePost(${post.id})" title="Delete">
+                🗑️ Delete
+            </button>
+        `;
+    }
 }
 
 function checkLinkedInStatus() {
