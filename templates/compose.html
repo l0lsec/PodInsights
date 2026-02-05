@@ -168,6 +168,20 @@
         line-height: 1.5;
     }
     
+    /* Inline editing styles */
+    .social-copy-text[contenteditable="true"] {
+        cursor: text;
+        transition: background-color 0.2s, box-shadow 0.2s;
+    }
+    .social-copy-text[contenteditable="true"]:focus {
+        outline: 2px solid #0d6efd;
+        outline-offset: 2px;
+        background-color: rgba(13, 110, 253, 0.05);
+    }
+    .social-copy-text[contenteditable="true"]:hover:not(:focus) {
+        background-color: rgba(0, 0, 0, 0.02);
+    }
+    
     /* Platform colors */
     :root {
         --platform-linkedin-color: #0077B5;
@@ -877,7 +891,7 @@
                             </div>
                         </div>
                         <div class="post-content-wrapper">
-                            <pre class="social-copy-text" id="saved-post-{{ post.id }}">{{ post.content }}</pre>
+                            <pre class="social-copy-text" id="saved-post-{{ post.id }}" contenteditable="true" onfocus="enablePostEdit(this)" onblur="autoSavePost({{ post.id }}, this, 'standalone')">{{ post.content }}</pre>
                             <!-- Image attachment section -->
                             <div class="post-image-section mt-2" id="image-section-{{ post.id }}">
                                 {% if post.image_url %}
@@ -1625,6 +1639,58 @@ function copySavedPost(btn, postId) {
             btn.classList.remove('btn-success');
             btn.classList.add('btn-outline-secondary');
         }, 2000);
+    });
+}
+
+// Inline editing functions
+function enablePostEdit(element) {
+    // Store original content when focusing (if not already stored)
+    if (!element.dataset.editing) {
+        element.dataset.originalContent = element.textContent;
+        element.dataset.editing = 'true';
+    }
+}
+
+function autoSavePost(postId, element, postType) {
+    const newContent = element.textContent.trim();
+    const originalContent = element.dataset.originalContent;
+    
+    // Reset editing state
+    element.dataset.editing = '';
+    
+    // Only save if content changed
+    if (newContent === originalContent || !newContent) {
+        if (!newContent) {
+            element.textContent = originalContent; // Restore if empty
+        }
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('content', newContent);
+    
+    // Use different endpoint based on post type
+    const endpoint = postType === 'standalone' 
+        ? `/compose/post/${postId}/edit`
+        : `/social/${postId}/edit`;
+    
+    fetch(endpoint, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            element.dataset.originalContent = newContent;
+            showToast('Post updated!', 'success');
+        } else {
+            element.textContent = originalContent;
+            showToast('Error: ' + data.error, 'error');
+        }
+    })
+    .catch(error => {
+        element.textContent = originalContent;
+        showToast('Error saving: ' + error.message, 'error');
     });
 }
 
