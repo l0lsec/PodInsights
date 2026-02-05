@@ -3998,6 +3998,7 @@ def compose_post_to_linkedin(post_id: int):
             add_scheduled_post(
                 social_post_id=None,  # Not a social_post from articles
                 article_id=None,
+                standalone_post_id=post_id,
                 post_type='standalone',
                 platform='linkedin',
                 scheduled_for=now,
@@ -4077,6 +4078,7 @@ def compose_post_to_threads(post_id: int):
             add_scheduled_post(
                 social_post_id=None,
                 article_id=None,
+                standalone_post_id=post_id,
                 post_type='standalone',
                 platform='threads',
                 scheduled_for=now,
