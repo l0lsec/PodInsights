@@ -2490,6 +2490,13 @@ def schedule_list():
     """View all scheduled posts."""
     status_filter = request.args.get('status', '')
     platform_filter = request.args.get('platform', '')
+    date_from = request.args.get('date_from', '').strip()
+    date_to = request.args.get('date_to', '').strip()
+    sort_order = request.args.get('sort', 'asc')
+    
+    # Validate sort order
+    if sort_order not in ('asc', 'desc'):
+        sort_order = 'asc'
     
     # Initialize default time slots if none exist
     initialize_default_time_slots()
@@ -2497,6 +2504,9 @@ def schedule_list():
     posts = list_scheduled_posts(
         status=status_filter if status_filter else None,
         platform=platform_filter if platform_filter else None,
+        date_from=date_from if date_from else None,
+        date_to=date_to if date_to else None,
+        sort_order=sort_order,
     )
     
     # Convert to list of dicts and format dates
@@ -2563,6 +2573,9 @@ def schedule_list():
         scheduled_posts=scheduled,
         status_filter=status_filter,
         platform_filter=platform_filter,
+        date_from=date_from,
+        date_to=date_to,
+        sort_order=sort_order,
         linkedin_connected=linkedin_connected,
         threads_connected=threads_connected,
         time_slots=time_slots_list,
@@ -2580,10 +2593,20 @@ def schedule_list_json():
     """Return scheduled posts as JSON for AJAX refresh."""
     status_filter = request.args.get('status', '')
     platform_filter = request.args.get('platform', '')
+    date_from = request.args.get('date_from', '').strip()
+    date_to = request.args.get('date_to', '').strip()
+    sort_order = request.args.get('sort', 'asc')
+    
+    # Validate sort order
+    if sort_order not in ('asc', 'desc'):
+        sort_order = 'asc'
     
     posts = list_scheduled_posts(
         status=status_filter if status_filter else None,
         platform=platform_filter if platform_filter else None,
+        date_from=date_from if date_from else None,
+        date_to=date_to if date_to else None,
+        sort_order=sort_order,
     )
     
     # Convert to list of dicts and format dates

@@ -1369,9 +1369,21 @@ def get_posted_info_for_standalone_posts(standalone_post_ids: List[int], db_path
 def list_scheduled_posts(
     status: str | None = None,
     platform: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    sort_order: str = 'asc',
     db_path: str = DB_PATH,
 ) -> List[sqlite3.Row]:
-    """List scheduled posts with optional filtering."""
+    """List scheduled posts with optional filtering.
+    
+    Args:
+        status: Filter by post status (pending, posted, failed, cancelled)
+        platform: Filter by platform (linkedin, threads)
+        date_from: Filter posts scheduled on or after this date (YYYY-MM-DD)
+        date_to: Filter posts scheduled on or before this date (YYYY-MM-DD)
+        sort_order: Sort order for scheduled_for column ('asc' or 'desc')
+        db_path: Database path
+    """
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         query = """
@@ -1395,8 +1407,17 @@ def list_scheduled_posts(
         if platform:
             query += " AND sp.platform = ?"
             params.append(platform)
+        if date_from:
+            query += " AND sp.scheduled_for >= ?"
+            params.append(date_from)
+        if date_to:
+            # Include the entire end date by appending end-of-day time
+            query += " AND sp.scheduled_for <= ?"
+            params.append(date_to + "T23:59:59")
 
-        query += " ORDER BY sp.scheduled_for ASC"
+        # Dynamic sort order (validate to prevent SQL injection)
+        order = "DESC" if sort_order.lower() == 'desc' else "ASC"
+        query += f" ORDER BY sp.scheduled_for {order}"
         cur = conn.execute(query, params)
         return cur.fetchall()
 

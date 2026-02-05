@@ -21,6 +21,18 @@
 tr.not-draggable .drag-handle {
     cursor: not-allowed !important;
 }
+/* Sortable column header */
+th[onclick] {
+    user-select: none;
+}
+th[onclick]:hover {
+    background-color: #f8f9fa;
+}
+.sort-indicator {
+    font-size: 0.75em;
+    margin-left: 4px;
+    opacity: 0.7;
+}
 </style>
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
@@ -256,7 +268,7 @@ tr.not-draggable .drag-handle {
             <strong>📅 Scheduled Posts Queue</strong>
             <div class="d-flex align-items-center gap-2 flex-wrap">
                 <!-- Filters -->
-                <form method="get" class="d-flex align-items-center gap-2" id="filter-form">
+                <form method="get" class="d-flex align-items-center gap-2 flex-wrap" id="filter-form">
                     <select name="status" class="form-select form-select-sm" style="width: auto;" onchange="this.form.submit()">
                         <option value="">All Statuses</option>
                         <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>⏳ Pending</option>
@@ -269,8 +281,19 @@ tr.not-draggable .drag-handle {
                         <option value="linkedin" {% if platform_filter == 'linkedin' %}selected{% endif %}>💼 LinkedIn</option>
                         <option value="threads" {% if platform_filter == 'threads' %}selected{% endif %}>🧵 Threads</option>
                     </select>
-                    {% if status_filter or platform_filter %}
-                    <a href="{{ url_for('schedule_list') }}" class="btn btn-sm btn-outline-secondary" title="Clear Filters">✕</a>
+                    <div class="input-group input-group-sm" style="width: auto;">
+                        <span class="input-group-text">From</span>
+                        <input type="date" name="date_from" class="form-control form-control-sm" 
+                               value="{{ date_from }}" onchange="this.form.submit()" style="width: 140px;">
+                    </div>
+                    <div class="input-group input-group-sm" style="width: auto;">
+                        <span class="input-group-text">To</span>
+                        <input type="date" name="date_to" class="form-control form-control-sm" 
+                               value="{{ date_to }}" onchange="this.form.submit()" style="width: 140px;">
+                    </div>
+                    <input type="hidden" name="sort" value="{{ sort_order }}">
+                    {% if status_filter or platform_filter or date_from or date_to %}
+                    <a href="{{ url_for('schedule_list') }}{% if sort_order != 'asc' %}?sort={{ sort_order }}{% endif %}" class="btn btn-sm btn-outline-secondary" title="Clear Filters">✕</a>
                     {% endif %}
                 </form>
                 <span class="badge" style="background-color: #0077B5;">💼 {{ linkedin_count }}</span>
@@ -305,7 +328,14 @@ tr.not-draggable .drag-handle {
                             <input type="checkbox" class="form-check-input" id="select-all" onchange="toggleSelectAll(this)">
                         </th>
                         <th>Status</th>
-                        <th>Scheduled For</th>
+                        <th style="cursor: pointer;" onclick="toggleSort()" title="Click to sort">
+                            Scheduled For
+                            {% if sort_order == 'asc' %}
+                            <span class="sort-indicator">▲</span>
+                            {% else %}
+                            <span class="sort-indicator">▼</span>
+                            {% endif %}
+                        </th>
                         <th>Type</th>
                         <th>Content Preview</th>
                         <th>Platform</th>
@@ -763,6 +793,21 @@ function refreshNextSlots() {
         });
 }
 
+// Toggle sort order for scheduled_for column
+function toggleSort() {
+    const currentSort = document.querySelector('input[name="sort"]')?.value || 'asc';
+    const newSort = currentSort === 'asc' ? 'desc' : 'asc';
+    
+    // Update the hidden input
+    const sortInput = document.querySelector('input[name="sort"]');
+    if (sortInput) {
+        sortInput.value = newSort;
+    }
+    
+    // Submit the form to apply the new sort
+    document.getElementById('filter-form').submit();
+}
+
 // Refresh the scheduled posts queue without full page reload
 function refreshQueue() {
     const btn = document.getElementById('refresh-queue-btn');
@@ -780,10 +825,16 @@ function refreshQueue() {
     // Get current filter values
     const statusFilter = document.querySelector('select[name="status"]')?.value || '';
     const platformFilter = document.querySelector('select[name="platform"]')?.value || '';
+    const dateFrom = document.querySelector('input[name="date_from"]')?.value || '';
+    const dateTo = document.querySelector('input[name="date_to"]')?.value || '';
+    const sortOrder = document.querySelector('input[name="sort"]')?.value || 'asc';
     
     const params = new URLSearchParams();
     if (statusFilter) params.append('status', statusFilter);
     if (platformFilter) params.append('platform', platformFilter);
+    if (dateFrom) params.append('date_from', dateFrom);
+    if (dateTo) params.append('date_to', dateTo);
+    if (sortOrder) params.append('sort', sortOrder);
     
     fetch(`/schedule/list-json?${params.toString()}`)
         .then(response => response.json())
